@@ -1,4 +1,4 @@
-import { Component, ReactNode } from "react";
+import { Component, ReactNode, Fragment, CSSProperties } from "react";
 
 interface ErrorBoundaryProps {
   tabId: string;
@@ -12,7 +12,7 @@ interface ErrorBoundaryState {
   retryKey: number;
 }
 
-const btnStyle: React.CSSProperties = {
+const btnStyle: CSSProperties = {
   padding: "6px 16px",
   background: "var(--surface, #313244)",
   border: "1px solid var(--overlay0, #6c7086)",
@@ -29,7 +29,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
     this.state = { hasError: false, error: null, retryKey: 0 };
   }
 
-  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
+  static getDerivedStateFromError(error: Error): { hasError: true; error: Error } {
     return { hasError: true, error };
   }
 
@@ -83,7 +83,9 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
       );
     }
 
-    // retryKey forces React to remount children on retry, giving a clean slate
-    return <div key={this.state.retryKey} style={{ display: "contents" }}>{this.props.children}</div>;
+    // Fragment with key forces React to remount children on retry (clean slate).
+    // Using Fragment adds zero DOM nodes, avoiding display:contents compatibility issues
+    // with older WebView2 builds that could break Terminal flex layout.
+    return <Fragment key={this.state.retryKey}>{this.props.children}</Fragment>;
   }
 }

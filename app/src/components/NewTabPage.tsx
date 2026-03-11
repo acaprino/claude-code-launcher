@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useProjectsContext } from "../contexts/ProjectsContext";
 import ProjectList from "./ProjectList";
@@ -23,7 +23,7 @@ interface NewTabPageProps {
 
 type ModalType = "create-project" | "manage-dirs" | "label-project" | "quick-launch" | "theme-picker" | "font-settings" | null;
 
-export default function NewTabPage({ tabId, onLaunch, onRequestClose, isActive }: NewTabPageProps) {
+function NewTabPage({ tabId, onLaunch, onRequestClose, isActive }: NewTabPageProps) {
   const {
     settings,
     projects,
@@ -173,7 +173,7 @@ export default function NewTabPage({ tabId, onLaunch, onRequestClose, isActive }
         case "F6":
           e.preventDefault();
           if (currentProjects[selectedIdxRef.current]) {
-            invoke("open_in_explorer", { path: currentProjects[selectedIdxRef.current].path }).catch(() => {});
+            invoke("open_in_explorer", { path: currentProjects[selectedIdxRef.current].path }).catch((e) => console.error("open_in_explorer failed:", e));
           }
           break;
         case "F7":
@@ -349,6 +349,8 @@ export default function NewTabPage({ tabId, onLaunch, onRequestClose, isActive }
     </div>
   );
 }
+
+export default memo(NewTabPage);
 
 // --- Create Project Modal ---
 

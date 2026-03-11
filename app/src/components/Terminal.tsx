@@ -138,10 +138,12 @@ export default memo(function Terminal({
         lastRows = rows;
         if (sessionIdRef.current) {
           if (debounce) {
+            // Capture session ID now — session may change within the 80ms window.
+            const capturedSid = sessionIdRef.current;
             clearTimeout(resizeTimer);
             resizeTimer = setTimeout(() => {
-              if (sessionIdRef.current) {
-                resizePty(sessionIdRef.current, cols, rows).catch(() => {});
+              if (sessionIdRef.current === capturedSid) {
+                resizePty(capturedSid, cols, rows).catch(() => {});
               }
             }, 80);
           } else {
@@ -228,7 +230,9 @@ export default memo(function Terminal({
 
     // File drag-and-drop: write dropped paths into PTY
     // Only allow safe Windows path characters to prevent shell injection
-    const SAFE_WIN_PATH = /^[a-zA-Z]:\\[\w\s.\-\\()[\]{}@#$%^+=~,]+$/;
+    // Only allow alphanumeric, whitespace, common punctuation — exclude cmd.exe
+    // metacharacters (%, ^, !, &, |) that would expand or inject when written to a PTY.
+    const SAFE_WIN_PATH = /^[a-zA-Z]:\\[\w\s.\-\\()]+$/;
     let unlistenDragDrop: (() => void) | null = null;
     getCurrentWebview().onDragDropEvent((event) => {
       if (cancelled) return;

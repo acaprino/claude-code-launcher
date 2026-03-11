@@ -1,7 +1,10 @@
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+use crate::projects::data_dir;
 
 /// Maximum number of rotated log files to keep (log, log.1, log.2, log.3).
 const MAX_ROTATED: u32 = 3;
@@ -9,42 +12,45 @@ const MAX_ROTATED: u32 = 3;
 /// Maximum log file size before mid-session rotation (10 MB).
 const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024;
 
-static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
-static LOG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
-
-/// Returns the directory containing the running executable.
-/// Falls back to current working directory if the exe path cannot be determined.
-fn exe_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."))
+/// Combined file + path state locked together to prevent TOCTOU races
+/// during mid-session rotation (check-rotate-reopen must be atomic).
+struct LogState {
+    file: Option<File>,
+    path: Option<PathBuf>,
 }
 
+static LOG: Mutex<LogState> = Mutex::new(LogState { file: None, path: None });
+
 pub fn log_path() -> PathBuf {
-    exe_dir().join("claude-launcher.log")
+    data_dir().join("claude-launcher.log")
 }
 
 /// Rotate log files: .log → .log.1 → .log.2 → .log.3, deleting the oldest.
+/// Uses OsString concatenation to avoid lossy Display conversion on non-UTF-8 paths.
 fn rotate(base: &PathBuf) {
     // Delete the oldest rotated file
-    let oldest = PathBuf::from(format!("{}.{MAX_ROTATED}", base.display()));
-    let _ = fs::remove_file(&oldest);
+    let mut oldest: OsString = base.as_os_str().to_os_string();
+    oldest.push(format!(".{MAX_ROTATED}"));
+    let _ = fs::remove_file(PathBuf::from(&oldest));
 
     // Shift .N-1 → .N, .N-2 → .N-1, etc.
     for i in (1..MAX_ROTATED).rev() {
-        let from = PathBuf::from(format!("{}.{i}", base.display()));
-        let to = PathBuf::from(format!("{}.{}", base.display(), i + 1));
-        let _ = fs::rename(&from, &to);
+        let mut from: OsString = base.as_os_str().to_os_string();
+        from.push(format!(".{i}"));
+        let mut to: OsString = base.as_os_str().to_os_string();
+        to.push(format!(".{}", i + 1));
+        let _ = fs::rename(PathBuf::from(&from), PathBuf::from(&to));
     }
 
     // Current log → .1
-    let to = PathBuf::from(format!("{}.1", base.display()));
-    let _ = fs::rename(base, &to);
+    let mut to: OsString = base.as_os_str().to_os_string();
+    to.push(".1");
+    let _ = fs::rename(base, PathBuf::from(&to));
 }
 
 pub fn init() {
     let path = log_path();
+    let mut state = LOG.lock().unwrap_or_else(|e| e.into_inner());
 
     // Rotate previous logs before opening a new one
     if path.exists() {
@@ -61,8 +67,8 @@ pub fn init() {
         Ok(mut f) => {
             let _ = writeln!(f, "[{}] === Claude Launcher started ===", timestamp());
             let _ = writeln!(f, "[{}] Log file: {}", timestamp(), path.display());
-            *LOG_PATH.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
-            *LOG_FILE.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
+            state.path = Some(path);
+            state.file = Some(f);
         }
         Err(e) => {
             eprintln!("Failed to open log file {}: {e}", path.display());
@@ -76,38 +82,32 @@ pub fn log(level: &str, msg: &str) {
     // Always print to stderr for dev console
     eprintln!("{line}");
 
-    // Also write to file
-    let should_rotate = {
-        let mut guard = LOG_FILE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(ref mut f) = *guard {
-            let _ = writeln!(f, "{line}");
-            let _ = f.flush();
-            f.metadata().map(|m| m.len() >= MAX_LOG_SIZE).unwrap_or(false)
-        } else {
-            false
-        }
-    };
+    // Write to file under a single lock for the entire check-rotate-reopen sequence.
+    // Holding the lock prevents concurrent threads from observing LOG_FILE = None
+    // during rotation or triggering a double rotation.
+    let mut state = LOG.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref mut f) = state.file {
+        let _ = writeln!(f, "{line}");
+        let _ = f.flush();
 
-    // Mid-session rotation outside the LOG_FILE lock to avoid deadlock.
-    if should_rotate {
-        let path = LOG_PATH.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Some(path) = path {
-            // Close the current file before rotating
-            *LOG_FILE.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            rotate(&path);
-            let new_file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&path);
-            let mut guard = LOG_FILE.lock().unwrap_or_else(|e| e.into_inner());
-            match new_file {
-                Ok(mut nf) => {
-                    let _ = writeln!(nf, "[{}] === Log rotated (size cap) ===", timestamp());
-                    *guard = Some(nf);
-                }
-                Err(_) => {
-                    *guard = None;
+        let should_rotate = f.metadata().map(|m| m.len() >= MAX_LOG_SIZE).unwrap_or(false);
+        if should_rotate {
+            if let Some(path) = state.path.clone() {
+                state.file = None;
+                rotate(&path);
+                match OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&path)
+                {
+                    Ok(mut nf) => {
+                        let _ = writeln!(nf, "[{}] === Log rotated (size cap) ===", timestamp());
+                        state.file = Some(nf);
+                    }
+                    Err(_) => {
+                        state.file = None;
+                    }
                 }
             }
         }
@@ -150,6 +150,28 @@ fn days_to_date(days: u64) -> (u64, u64, u64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::days_to_date;
+
+    #[test]
+    fn test_epoch() {
+        assert_eq!(days_to_date(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn test_known_dates() {
+        assert_eq!(days_to_date(18262), (2020, 1, 1));
+        assert_eq!(days_to_date(18628), (2021, 1, 1));
+        assert_eq!(days_to_date(19723), (2023, 12, 31));
+    }
+
+    #[test]
+    fn test_leap_day() {
+        assert_eq!(days_to_date(18321), (2020, 2, 29));
+    }
 }
 
 #[macro_export]

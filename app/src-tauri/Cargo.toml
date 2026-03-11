@@ -6,8 +6,14 @@ edition = "2021"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# Enable Tauri DevTools (Ctrl+Shift+I inspector). Include only for development builds:
+#   cargo tauri dev --features devtools
+# Release builds should NOT include this — DevTools exposes the full IPC surface.
+devtools = ["tauri/devtools"]
+
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
@@ -35,4 +41,6 @@ codegen-units = 1
 lto = true
 opt-level = 3
 strip = true
-panic = "abort"
+# panic = "unwind" (default) — required for catch_unwind to work in release builds.
+# "abort" was previously set but defeats the panic-isolation strategy in session.rs
+# and projects.rs (catch_unwind is a no-op with panic = "abort").

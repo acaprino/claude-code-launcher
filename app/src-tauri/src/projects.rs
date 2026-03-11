@@ -90,7 +90,7 @@ pub struct ProjectInfo {
     pub has_claude_md: bool,
 }
 
-pub fn data_dir() -> PathBuf {
+pub(crate) fn data_dir() -> PathBuf {
     let dir = dirs::data_local_dir()
         .map(|p| p.join("claude-launcher"))
         .unwrap_or_else(|| {
@@ -250,7 +250,7 @@ fn scan_one_project(path: &str, label: Option<&String>) -> Option<ProjectInfo> {
             // network share), we'd block the scan thread forever without this.
             let stdout_pipe = child.stdout.take();
             let (tx, rx) = std::sync::mpsc::channel();
-            thread::spawn(move || {
+            let reader_handle = thread::spawn(move || {
                 let Some(stdout) = stdout_pipe else {
                     let _ = tx.send((None, false));
                     return;
@@ -285,6 +285,10 @@ fn scan_one_project(path: &str, label: Option<&String>) -> Option<ProjectInfo> {
 
             let _ = child.kill();
             let _ = child.wait();
+            // Join the reader thread — pipe is broken after kill+wait so this is prompt.
+            // Prevents thread leaks when git hangs (e.g., network shares, subprocesses
+            // that inherited the pipe handle).
+            let _ = reader_handle.join();
             result
         }
         _ => (None, false),
@@ -386,6 +390,20 @@ pub fn create_project(parent: &str, name: &str, git_init: bool) -> Result<String
     // C1: Direct name validation instead of canonicalize-based check.
     // Reject names containing path separators or parent-directory traversal.
     if sanitized.contains('/') || sanitized.contains('\\') || sanitized.contains("..") {
+        return Err("Invalid project name".to_string());
+    }
+
+    // Reject Windows reserved device names and hidden directories (leading dot).
+    // Reserved names (e.g. "CON", "NUL") cause undefined behavior with Windows APIs.
+    // Names starting with '.' are hidden and excluded from project scanning.
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let stem = sanitized.to_ascii_uppercase();
+    let stem = stem.split('.').next().unwrap_or("");
+    if RESERVED.contains(&stem) || sanitized.starts_with('.') {
         return Err("Invalid project name".to_string());
     }
 

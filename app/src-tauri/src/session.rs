@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,6 +16,10 @@ use crate::pty::PtySession;
 const MAX_SESSIONS: usize = 10;
 const OUTPUT_BATCH_MS: u64 = 16;
 const MAX_WRITE_SIZE: usize = 65536;
+
+/// Heartbeat timeout: 60s gives 12× safety margin over the 5s heartbeat interval.
+/// Previously 30s (only 6×), which risked reaping live sessions under main-thread load.
+const HEARTBEAT_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
@@ -71,6 +76,11 @@ impl SessionRegistry {
 
         let session_id = Uuid::new_v4().to_string();
 
+        // Shared flag ensures only one of {reader-panic path, exit-watcher} sends Exit.
+        // Without this, a reader panic sends Exit{-1} and the exit watcher also fires,
+        // producing two Exit events and two updateTab calls with conflicting codes.
+        let exit_sent = Arc::new(AtomicBool::new(false));
+
         // Output reader thread with batching.
         //
         // Shutdown mechanism: when a session is killed via kill(), TerminateProcess
@@ -81,6 +91,7 @@ impl SessionRegistry {
         let pty_reader = Arc::clone(&pty);
         let channel = on_event.clone();
         let reader_sid = session_id.clone();
+        let reader_exit_sent = Arc::clone(&exit_sent);
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let buf_size = 4096;
@@ -115,10 +126,11 @@ impl SessionRegistry {
                 }
             }));
             if result.is_err() {
-                // Send an exit event so the frontend knows this tab is dead,
-                // rather than leaving it in a zombie state.
-                let _ = channel.send(PtyEvent::Exit { code: -1 });
                 eprintln!("PTY reader thread panicked for session {reader_sid}");
+                // Only send Exit if the exit watcher hasn't already done so.
+                if !reader_exit_sent.swap(true, Ordering::SeqCst) {
+                    let _ = channel.send(PtyEvent::Exit { code: -1 });
+                }
             }
         });
 
@@ -126,12 +138,16 @@ impl SessionRegistry {
         let pty_waiter = Arc::clone(&pty);
         let exit_channel = on_event;
         let waiter_sid = session_id.clone();
+        let waiter_exit_sent = Arc::clone(&exit_sent);
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 pty_waiter.wait_for_exit().unwrap_or(-1)
             }));
             let code = result.unwrap_or(-1);
-            let _ = exit_channel.send(PtyEvent::Exit { code });
+            // Only send Exit if the reader-panic path hasn't already done so.
+            if !waiter_exit_sent.swap(true, Ordering::SeqCst) {
+                let _ = exit_channel.send(PtyEvent::Exit { code });
+            }
             if result.is_err() {
                 eprintln!("PTY exit-watcher thread panicked for session {waiter_sid}");
             }
@@ -209,7 +225,9 @@ impl SessionRegistry {
                     let mut sessions = registry.sessions.lock().unwrap_or_else(|e| e.into_inner());
                     let stale: Vec<String> = sessions
                         .iter()
-                        .filter(|(_, entry)| entry.last_heartbeat.elapsed() > Duration::from_secs(30))
+                        .filter(|(_, entry)| {
+                            entry.last_heartbeat.elapsed() > Duration::from_secs(HEARTBEAT_TIMEOUT_SECS)
+                        })
                         .map(|(id, _)| id.clone())
                         .collect();
                     for id in stale {
@@ -221,6 +239,7 @@ impl SessionRegistry {
                 if result.is_err() {
                     // Panic was already logged by the global panic hook.
                     // Continue reaping — this thread must not die.
+                    eprintln!("Session reaper panicked — continuing");
                 }
             }
         });

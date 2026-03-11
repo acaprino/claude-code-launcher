@@ -6,7 +6,8 @@ import App from "./App";
 // These catch errors that escape ErrorBoundaries (async errors, event handlers, etc.).
 window.addEventListener("unhandledrejection", (e) => {
   console.error("[unhandled rejection]", e.reason);
-  e.preventDefault(); // Prevent default browser behavior (console error + potential crash)
+  // Do not call e.preventDefault() — suppressing the default would hide real bugs
+  // (e.g., unexpected Tauri IPC rejections) with no visible trace in production.
 });
 
 window.addEventListener("error", (e) => {

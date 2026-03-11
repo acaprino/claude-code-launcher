@@ -15,3 +15,7 @@ claude-launcher-settings.json.bak
 claude-launcher-settings.json.tmp
 claude-launcher-usage.json
 claude-launcher-usage.json.tmp
+
+# log files (written to exe dir during dev, data dir in release)
+claude-launcher.log
+claude-launcher.log.*
