@@ -2,11 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const DEFAULT_PROJECTS_DIR: &str = r"D:\Projects";
 
@@ -227,6 +230,7 @@ fn scan_one_project(path: &str, label: Option<&String>) -> Option<ProjectInfo> {
     let (branch, is_dirty) = match Command::new("git")
         .args(["status", "--branch", "--porcelain=v2"])
         .current_dir(path)
+        .creation_flags(CREATE_NO_WINDOW)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -285,8 +289,8 @@ pub fn scan_projects(project_dirs: &[String], labels: &HashMap<String, String>) 
 
     let (tx, rx) = mpsc::channel();
 
-    // Process in chunks of 8 to cap concurrent OS threads.
-    for chunk in all_paths.chunks(8) {
+    // Process in chunks of 4 to avoid exhausting Windows pipe handles.
+    for chunk in all_paths.chunks(4) {
         let handles: Vec<_> = chunk
             .iter()
             .map(|dir| {
@@ -347,6 +351,7 @@ pub fn create_project(parent: &str, name: &str, git_init: bool) -> Result<String
         Command::new("git")
             .args(["init"])
             .current_dir(&project_path)
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("git init failed: {e}"))?;
     }

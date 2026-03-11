@@ -11,30 +11,34 @@ Run via `cargo tauri dev` (development) or build with `cargo tauri build`.
 - **Frontend**: React 19 + TypeScript + Vite (in `app/`)
 - **Backend**: Rust + Tauri 2 (in `app/src-tauri/`)
 - **Terminal**: xterm.js with WebGL renderer
-- **Theme**: Catppuccin Mocha (dark-only)
+- **Themes**: 8 dark themes (Catppuccin Mocha default), selectable via F9
 
 ## Key Paths
 
 - `app/src/` — React frontend source
-- `app/src/components/` — TabBar, Terminal, ProjectList, StatusBar, NewTabPage
+- `app/src/components/` — TabBar, Terminal, ProjectList, StatusBar, NewTabPage, Modal, ErrorBoundary
 - `app/src/hooks/` — useTabManager, useProjects, usePty
 - `app/src/contexts/` — ProjectsContext (shared project state)
-- `app/src-tauri/src/` — Rust backend (PTY management, project scanning, settings)
+- `app/src/themes.ts` — Theme application to CSS variables and xterm
+- `app/src/types.ts` — Type definitions, model/effort/sort/theme constants
+- `app/src-tauri/src/` — Rust backend: main.rs, pty.rs, projects.rs, commands.rs, claude.rs, session.rs, logging.rs
 
 ## Architecture
 
 ### Frontend
 
-- `App.tsx` — Tab orchestration, global keyboard shortcuts, close confirmation
+- `App.tsx` — Tab orchestration, global keyboard shortcuts, resize handles
 - `TabBar.tsx` — Tab bar with drag region, output indicator, exit status
-- `Terminal.tsx` — xterm.js wrapper with WebGL, PTY communication via Tauri Channel
-- `NewTabPage.tsx` — Project picker with keyboard navigation, settings cycling
+- `Terminal.tsx` — xterm.js wrapper with WebGL, PTY communication via Tauri Channel, file drag-and-drop
+- `NewTabPage.tsx` — Project picker with keyboard navigation, settings cycling, modals
 - `ProjectList.tsx` — Scrollable project list with branch/dirty/CLAUDE.md indicators
-- `StatusBar.tsx` — Model, effort, sort, permissions display
+- `StatusBar.tsx` — Model, effort, sort, permissions, theme, font display + action buttons
+- `Modal.tsx` — Reusable modal component
+- `ErrorBoundary.tsx` — Wraps Terminal components
 
 ### Hooks
 
-- `useTabManager` — Tab lifecycle (add/close/update/activate/next/prev) with stable callbacks via refs
+- `useTabManager` — Tab lifecycle (add/close/update/activate/next/prev) with stable callbacks via refs; session save/restore across app restarts
 - `useProjects` — Settings + usage loading, project scanning, filtering/sorting via Tauri IPC
 - `usePty` — PTY spawn/write/resize/kill/heartbeat via Tauri Channel
 
@@ -51,6 +55,14 @@ sonnet / opus / haiku / sonnet [1M] / opus [1M]
 Model IDs: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5`,
 `claude-sonnet-4-6[1m]`, `claude-opus-4-6[1m]`
 
+## Effort Levels (F2 to cycle)
+
+high / medium / low
+
+## Sort Orders (F3 to cycle)
+
+alpha / last used / most used
+
 ## Keyboard Shortcuts
 
 - **Ctrl+T**: New tab
@@ -60,20 +72,29 @@ Model IDs: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5`,
 - **F2**: Cycle effort level
 - **F3**: Cycle sort order
 - **F4**: Toggle skip-permissions
+- **F5**: Create new project
 - **F6**: Open project in Explorer
+- **F7**: Manage project directories
+- **F8**: Label selected project
+- **F9**: Theme picker
+- **F10**: Quick launch (arbitrary directory)
+- **F11**: Font settings
 - **Enter**: Launch selected project
 - **Esc**: Clear filter / close tab
+- **Backspace**: Delete last filter character
 - **Type to filter**: Case-insensitive project search
 - **Arrow keys / PageUp / PageDown / Home / End**: Navigate project list
 
 ## Design Tokens
 
 CSS custom properties in `App.css` `:root`:
-- Colors: `--bg`, `--surface`, `--mantle`, `--text`, `--text-dim`, `--accent`, `--red`, `--green`, `--yellow`
-- Spacing: `--space-1` (4px) through `--space-4` (16px)
+- Colors: `--bg`, `--surface`, `--mantle`, `--crust`, `--text`, `--text-dim`, `--overlay0`, `--overlay1`, `--accent`, `--red`, `--green`, `--yellow`
+- Spacing: `--space-1` (4px) through `--space-12` (48px)
 - Typography: `--text-xs` (10px) through `--text-xl` (18px)
 - Radii: `--radius-sm` (4px), `--radius-md` (6px)
 - Overlays: `--hover-overlay`, `--hover-overlay-subtle`
+- Z-index: `--z-resize`, `--z-modal`
+- Layout: `--tab-height`
 
 ## Important Constraints
 
@@ -83,3 +104,5 @@ CSS custom properties in `App.css` `:root`:
 - All components use `React.memo` for re-render control.
 - Terminal callbacks use refs to avoid stale closures in high-frequency PTY events.
 - PTY sessions are killed on tab close via `killSession()`.
+- Dropped file paths are validated against safe Windows path characters before writing to PTY.
+- Hidden directories (starting with `.`) are excluded from project scanning.
