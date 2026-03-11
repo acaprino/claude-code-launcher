@@ -218,6 +218,10 @@ pub fn record_usage(project_path: &str) -> io::Result<()> {
     save_usage(&usage)
 }
 
+/// Maximum bytes to read from git stdout before giving up.
+/// This prevents OOM when a repo has massive untracked/dirty output.
+const GIT_OUTPUT_LIMIT: usize = 512 * 1024; // 512 KB
+
 fn scan_one_project(path: &str, label: Option<&String>) -> Option<ProjectInfo> {
     let p = Path::new(path);
     if !p.is_dir() {
@@ -234,15 +238,44 @@ fn scan_one_project(path: &str, label: Option<&String>) -> Option<ProjectInfo> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .and_then(|child| child.wait_with_output())
     {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let branch = stdout
-                .lines()
-                .find(|l| l.starts_with("# branch.head "))
-                .map(|l| l.trim_start_matches("# branch.head ").to_string());
-            let dirty = stdout.lines().any(|l| !l.starts_with('#'));
+        Ok(mut child) => {
+            // Read stdout incrementally with a size cap to prevent OOM
+            // on repos with massive untracked/dirty file lists.
+            let stdout_pipe = child.stdout.take();
+            let (branch, dirty) = if let Some(stdout) = stdout_pipe {
+                use std::io::{BufRead, BufReader};
+                let reader = BufReader::new(stdout);
+                let mut branch: Option<String> = None;
+                let mut dirty = false;
+                let mut total_bytes: usize = 0;
+
+                for line in reader.lines() {
+                    let line = match line {
+                        Ok(l) => l,
+                        Err(_) => break,
+                    };
+                    total_bytes += line.len() + 1;
+                    if line.starts_with("# branch.head ") {
+                        branch = Some(line.trim_start_matches("# branch.head ").to_string());
+                    } else if !line.starts_with('#') && !line.is_empty() {
+                        dirty = true;
+                    }
+                    // Once we have branch info and know it's dirty, or hit
+                    // the size limit, stop reading to avoid unbounded memory use.
+                    if (branch.is_some() && dirty) || total_bytes > GIT_OUTPUT_LIMIT {
+                        break;
+                    }
+                }
+                (branch, dirty)
+            } else {
+                (None, false)
+            };
+
+            // Ensure the child process is cleaned up (kill if still running
+            // because we may have stopped reading early).
+            let _ = child.kill();
+            let _ = child.wait();
             (branch, dirty)
         }
         _ => (None, false),
