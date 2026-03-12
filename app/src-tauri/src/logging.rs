@@ -20,11 +20,10 @@ struct LogState {
 static LOG: Mutex<LogState> = Mutex::new(LogState { file: None, path: None });
 
 pub fn log_path() -> PathBuf {
-    // Use %LOCALAPPDATA%\claude-launcher\ — same location as settings, usage, and session
-    // files — so all app data lives together. Avoids write-permission failures that occur
-    // when the exe is installed under Program Files.
-    dirs::data_local_dir()
-        .map(|p| p.join("claude-launcher").join("claude-launcher.log"))
+    // Place log file next to the executable for easy access.
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("claude-launcher.log")))
         .unwrap_or_else(|| std::env::temp_dir().join("claude-launcher.log"))
 }
 
