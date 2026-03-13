@@ -22,7 +22,6 @@ win32job = "2"
 which = "7"
 dirs = "6"
 regex-lite = "0.1"
-base64 = "0.22"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-shell = "2"
 

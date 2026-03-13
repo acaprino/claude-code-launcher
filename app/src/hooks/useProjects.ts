@@ -132,16 +132,17 @@ export function useProjects() {
   }, [projects, filter, sortIdx, usage]);
 
   const refresh = useCallback(async () => {
-    if (!settings) return;
+    const s = settingsRef.current;
+    if (!s) return;
     setLoading(true);
     const projs = await invoke<ProjectInfo[]>("scan_projects", {
-      projectDirs: settings.project_dirs,
-      singleProjectDirs: settings.single_project_dirs,
-      labels: settings.project_labels,
+      projectDirs: s.project_dirs,
+      singleProjectDirs: s.single_project_dirs,
+      labels: s.project_labels,
     });
     setProjects(projs);
     setLoading(false);
-  }, [settings]);
+  }, []);
 
   const recordUsage = useCallback(async (projectPath: string) => {
     await invoke("record_usage", { projectPath });

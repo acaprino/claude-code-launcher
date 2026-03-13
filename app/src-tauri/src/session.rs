@@ -4,8 +4,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use serde::Serialize;
 use tauri::ipc::Channel;
 use uuid::Uuid;
@@ -25,7 +23,7 @@ const HEARTBEAT_TIMEOUT_SECS: u64 = 60;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum PtyEvent {
-    Output { data: String }, // base64-encoded binary data
+    Output { data: String }, // UTF-8 text (lossy-converted from PTY output)
     Exit { code: i32 },
 }
 
@@ -95,9 +93,9 @@ impl SessionRegistry {
         let reader_exit_sent = Arc::clone(&exit_sent);
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let buf_size = 4096;
-                let mut buf = [0u8; 4096];
-                let mut accum: Vec<u8> = Vec::with_capacity(8192);
+                let buf_size = 16384;
+                let mut buf = [0u8; 16384];
+                let mut accum: Vec<u8> = Vec::with_capacity(32768);
                 let mut last_flush = Instant::now();
                 loop {
                     match pty_reader.read(&mut buf) {
@@ -105,13 +103,13 @@ impl SessionRegistry {
                         Ok(n) => {
                             accum.extend_from_slice(&buf[..n]);
                             let elapsed = last_flush.elapsed() >= Duration::from_millis(OUTPUT_BATCH_MS);
-                            let full = accum.len() >= 8192;
+                            let full = accum.len() >= 32768;
                             // Flush if: batch timer expired, buffer is full, or we got
                             // a partial read (less than buffer size) indicating the
                             // process is idle and we should display output promptly.
                             let partial = n < buf_size;
                             if elapsed || full || partial {
-                                let data = STANDARD.encode(&std::mem::take(&mut accum));
+                                let data = String::from_utf8_lossy(&std::mem::take(&mut accum)).into_owned();
                                 if channel.send(PtyEvent::Output { data }).is_err() {
                                     break;
                                 }
@@ -122,7 +120,7 @@ impl SessionRegistry {
                     }
                 }
                 if !accum.is_empty() {
-                    let data = STANDARD.encode(&accum);
+                    let data = String::from_utf8_lossy(&accum).into_owned();
                     let _ = channel.send(PtyEvent::Output { data });
                 }
             }));

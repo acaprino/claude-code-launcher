@@ -233,7 +233,7 @@ export default memo(function Terminal({
         skipPerms,
         cols,
         rows,
-        (data: Uint8Array) => {
+        (data: string) => {
           xtermRef.current?.write(data);
           if (!isActiveRef.current) {
             onNewOutputRef.current(tabIdRef.current);

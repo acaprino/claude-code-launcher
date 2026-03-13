@@ -71,7 +71,14 @@ export function useTabManager() {
     });
   }, []);
 
-  // Derive saveable state so we only persist when session-relevant data changes
+  // Derive saveable state so we only persist when session-relevant data changes.
+  // Use a stable key derived only from persistence-relevant fields to avoid
+  // recalculating on volatile changes like hasNewOutput or exitCode.
+  const saveableKey = tabs
+    .filter((t) => t.type === "terminal" && t.projectPath)
+    .map((t) => `${t.projectPath}|${t.projectName ?? "Terminal"}|${t.toolIdx ?? 0}|${t.modelIdx ?? 0}|${t.effortIdx ?? 0}|${t.skipPerms ?? false}`)
+    .join("\n");
+
   const saveableState = useMemo(() =>
     JSON.stringify(
       tabs
@@ -85,7 +92,8 @@ export function useTabManager() {
           skipPerms: t.skipPerms ?? false,
         })),
     ),
-    [tabs],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [saveableKey],
   );
 
   // Save session whenever saveable state changes (debounced)

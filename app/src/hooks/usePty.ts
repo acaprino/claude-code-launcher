@@ -12,14 +12,13 @@ export async function spawnClaude(
   skipPerms: boolean,
   cols: number,
   rows: number,
-  onOutput: (data: Uint8Array) => void,
+  onOutput: (data: string) => void,
   onExit: (code: number) => void,
 ): Promise<{ sessionId: string; channel: Channel<PtyEvent> }> {
   const onEvent = new Channel<PtyEvent>();
   onEvent.onmessage = (msg) => {
     if (msg.type === "output") {
-      const binary = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
-      onOutput(binary);
+      onOutput(msg.data);
     } else if (msg.type === "exit") {
       onExit(msg.code);
     }

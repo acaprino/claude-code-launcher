@@ -31,17 +31,17 @@ function AppContent() {
   const fontFamily = settings?.font_family ?? "Cascadia Code";
   const fontSize = settings?.font_size ?? 14;
 
-  // Update window title
+  // Update window title — depend only on fields that affect the title,
+  // not the entire tabs array (which changes on every hasNewOutput toggle)
+  const terminalCount = tabs.filter((t) => t.type === "terminal").length;
   useEffect(() => {
-    const terminalCount = tabs.filter((t) => t.type === "terminal").length;
-
     if (activeTab.type === "terminal" && activeTab.projectName) {
       const suffix = terminalCount > 1 ? ` (+${terminalCount - 1} tabs)` : "";
       appWindow.setTitle(`Anvil \u2014 ${activeTab.projectName}${suffix}`);
     } else {
       appWindow.setTitle("Anvil");
     }
-  }, [activeTab, tabs]);
+  }, [activeTab.type, activeTab.projectName, terminalCount]);
 
   // Global keyboard shortcuts
   useEffect(() => {

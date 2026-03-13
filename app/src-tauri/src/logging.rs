@@ -97,7 +97,10 @@ pub fn log(level: &str, msg: &str) {
     let mut state = LOG.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref mut f) = state.file {
         let _ = writeln!(f, "{line}");
-        let _ = f.flush();
+        // Only flush on ERROR to avoid per-line FlushFileBuffers syscalls
+        if level == "ERROR" {
+            let _ = f.flush();
+        }
 
         let should_rotate = f.metadata().map(|m| m.len() >= MAX_LOG_SIZE).unwrap_or(false);
         if should_rotate {
