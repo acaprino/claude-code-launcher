@@ -52,6 +52,17 @@ html, body, #root {
   font-size: 13px;
   color-scheme: dark;
   line-height: 1.4;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+/* Theme crossfade: smooth color transitions on structural containers when switching themes */
+.tab-bar,
+.status-bar,
+.new-tab-page,
+.modal-backdrop,
+.modal,
+.project-item {
+  transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
 }
 
 /* Browsers reset font-family on form controls — restore it once here */
@@ -149,7 +160,12 @@ button, input, select {
 .retro .tab-close,
 .retro .tab-add,
 .retro .win-btn,
+.retro .tab-bar,
+.retro .status-bar,
 .retro .status-btn,
+.retro .new-tab-page,
+.retro .modal-backdrop,
+.retro .modal,
 .retro .project-item,
 .retro .project-item:active,
 .retro .modal-btn,

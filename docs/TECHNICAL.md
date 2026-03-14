@@ -1,8 +1,8 @@
-# Claude Code Launcher -- Technical Documentation
+# Anvil -- Technical Documentation
 
 **Version:** 1.0.0
 **Platform:** Windows only
-**Last verified:** 2026-03-11
+**Last verified:** 2026-03-14
 
 ---
 
@@ -16,13 +16,14 @@
 6. [IPC Protocol](#6-ipc-protocol)
 7. [Keyboard Shortcuts](#7-keyboard-shortcuts)
 8. [Configuration](#8-configuration)
-9. [Development Guide](#9-development-guide)
+9. [Architecture Notes](#9-architecture-notes)
+10. [Development Guide](#10-development-guide)
 
 ---
 
 ## 1. Project Overview
 
-Claude Code Launcher is a Windows-only Tauri 2 desktop application for selecting and launching Claude Code CLI sessions in tabbed terminals. Users select a project from a scanned directory list, choose a model and settings, then launch an interactive Claude Code session in an embedded terminal.
+Anvil is a Windows-only Tauri 2 desktop application for selecting and launching CLI tool sessions (Claude Code, Gemini) in tabbed terminals. Users select a project from a scanned directory list, choose a tool, model, and settings, then launch an interactive CLI session in an embedded terminal.
 
 ### Tech Stack
 
@@ -43,8 +44,8 @@ Claude Code Launcher is a Windows-only Tauri 2 desktop application for selecting
 
 - Tabbed terminal interface with up to 10 concurrent PTY sessions (`session.rs:16`)
 - Project directory scanning with git branch/dirty status detection (`projects.rs:218-255`)
-- 5 Claude models, 3 effort levels, 3 sort orders (`claude.rs:3-11`, `types.ts:43-52`)
-- 8 dark color themes with live switching (`types.ts:77-150`)
+- 2 CLI tools (Claude Code, Gemini), 5 Claude models, 3 effort levels (`tools.rs:3-11`, `types.ts:47-58`)
+- 10 dark themes (8 standard + 2 retro) with live switching (`types.ts:84-177`)
 - Session restore across app restarts (`useTabManager.ts:48-70`)
 - File drag-and-drop into terminal (`Terminal.tsx:200-215`)
 - Configurable font family and size (`types.ts:23-34`)
@@ -59,7 +60,8 @@ Claude Code Launcher is a Windows-only Tauri 2 desktop application for selecting
 - **Windows 11** (or Windows 10 with pseudo-console support)
 - **Node.js** (for frontend build)
 - **Rust toolchain** (for Tauri backend)
-- **Claude Code CLI** installed globally (`npm install -g @anthropic-ai/claude-code`) -- resolved via `which` crate or fallback at `~/.local/bin/claude.exe` (`claude.rs:13-26`)
+- **Claude Code CLI** installed globally (`npm install -g @anthropic-ai/claude-code`) -- resolved via `which` crate or fallback at `~/.local/bin/claude.exe` (`tools.rs:13-26`)
+- **Gemini CLI** (optional, `npm install -g @google/gemini-cli`) -- resolved via `which` crate (`tools.rs`)
 
 ### Development
 
@@ -89,7 +91,7 @@ The app launches a single frameless window:
 | Property | Value |
 |----------|-------|
 | Label | `main` |
-| Title | `Claude Launcher` |
+| Title | `Anvil` |
 | Default size | 1200 x 800 |
 | Minimum size | 800 x 500 |
 | Decorations | `false` (custom title bar) |
@@ -139,7 +141,7 @@ graph TB
             SR["SessionRegistry<br/>Session management"]
             PTY["PtySession<br/>Win32 pseudo-console"]
             PROJ["projects.rs<br/>Scanning & settings"]
-            CL["claude.rs<br/>CLI command builder"]
+            CL["tools.rs<br/>CLI tool resolution"]
             LOG["logging.rs"]
 
             MAIN --> CMD
@@ -150,7 +152,7 @@ graph TB
         end
     end
 
-    TER -- "Tauri Channel<br/>(base64 output)" --> SR
+    TER -- "Tauri Channel<br/>(UTF-8 output)" --> SR
     NTP -- "invoke()" --> CMD
     UP -- "invoke()" --> CMD
     TM -- "invoke()<br/>save/load_session" --> CMD
@@ -161,9 +163,9 @@ graph TB
 1. **App startup:** `main.rs` creates a `SessionRegistry` (with Win32 Job Object), starts the session reaper thread, then launches the Tauri application.
 2. **Frontend mount:** React renders `App` inside `ProjectsProvider`. `useProjects` loads settings and usage data from disk via IPC, then scans project directories. `useTabManager` restores saved sessions from `load_session`.
 3. **Project selection:** User picks a project in `NewTabPage`, which calls `onLaunch` to convert the tab from `new-tab` to `terminal` type.
-4. **Terminal spawn:** `Terminal` component mounts, creates an xterm.js instance, calls `spawnClaude()` which opens a Tauri `Channel` and invokes `spawn_claude` IPC. The backend spawns a Win32 pseudo-console process.
-5. **I/O loop:** PTY output is read in a background thread, base64-encoded, and sent through the Channel. User input flows back via `write_pty` IPC.
-6. **Heartbeat:** A 5-second interval heartbeat keeps the session alive; the reaper kills sessions with no heartbeat for 30 seconds.
+4. **Terminal spawn:** `Terminal` component mounts, creates an xterm.js instance, calls `spawnTool()` which opens a Tauri `Channel` and invokes `spawn_tool` IPC. The backend spawns a Win32 pseudo-console process.
+5. **I/O loop:** PTY output is read in a background thread, sent as UTF-8 text through the Channel. User input flows back via `write_pty` IPC.
+6. **Heartbeat:** A 5-second interval heartbeat keeps the session alive; the reaper kills sessions with no heartbeat for 60 seconds.
 7. **Cleanup:** On tab close, `killSession()` terminates the process. On window close, `kill_all()` terminates all sessions.
 
 ---
@@ -179,8 +181,10 @@ graph TB
 | `pty` | `pty.rs` | Win32 pseudo-console creation and I/O |
 | `session` | `session.rs` | Session registry, output batching, reaper |
 | `projects` | `projects.rs` | Project scanning, settings/usage persistence |
-| `claude` | `claude.rs` | Claude CLI executable resolution and command building |
+| `tools` | `tools.rs` | CLI tool resolution and command building (Claude, Gemini) |
 | `logging` | `logging.rs` | File + stderr logging with macros |
+| `watcher` | `watcher.rs` | Filesystem watcher for project directory changes |
+| `marketplace` | `marketplace.rs` | Anvil marketplace sync |
 
 ### main.rs
 
@@ -201,31 +205,35 @@ A `PtySession` wraps a Win32 pseudo-console with these handles:
 | `hpc` | `HPCON` | Pseudo-console handle |
 | `process_handle` | `HANDLE` | Child process handle |
 | `thread_handle` | `HANDLE` | Child primary thread handle |
-| `input_write` | `HANDLE` | Write end of input pipe (frontend -> PTY) |
+| `input_write` | `Mutex<HANDLE>` | Write end of input pipe, mutex-guarded for per-session write serialization |
 | `output_read` | `HANDLE` | Read end of output pipe (PTY -> frontend) |
 | `pid` | `u32` | Child process ID |
+| `_attr_list_buf` | `Vec<u8>` | Owned proc thread attribute list buffer |
 
-**Spawn flow** (`PtySession::spawn`, `pty.rs:50-152`):
+**Spawn flow** (`PtySession::spawn`, `pty.rs:57-200`):
 
 1. Create two anonymous pipes (input and output).
 2. Call `CreatePseudoConsole` with the input read handle and output write handle.
 3. Close the pipe ends now owned by the pseudo-console.
-4. Initialize a proc thread attribute list with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`.
-5. Build a Unicode environment block (inheriting current env, then overwriting with custom vars).
-6. Call `CreateProcessW` with the command line, working directory, and environment.
-7. Return `PtySession` holding all handles.
+4. Clean up all handles on any error path (pipes, HPCON, attribute list).
+5. Initialize a proc thread attribute list with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`.
+6. Build a Unicode environment block (inheriting current env, then overwriting with custom vars).
+7. Call `CreateProcessW` with the command line, working directory, and environment.
+8. Return `PtySession` holding all handles.
+
+**SAFETY (unsafe Send+Sync):** `input_write` is protected by a Mutex, `output_read` is only used by the dedicated reader thread, and `process_handle`/`thread_handle` are only used for thread-safe Win32 wait/terminate calls.
 
 **I/O methods:**
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `write` | `(&self, data: &[u8]) -> io::Result<()>` | Writes to the PTY input pipe |
+| `write` | `(&self, data: &[u8]) -> io::Result<()>` | Acquires per-session mutex, writes to PTY input pipe in a loop until all data is sent |
 | `read` | `(&self, buf: &mut [u8]) -> io::Result<usize>` | Reads from the PTY output pipe (blocking) |
 | `resize` | `(&self, cols: i16, rows: i16) -> io::Result<()>` | Calls `ResizePseudoConsole` |
 | `wait_for_exit` | `(&self) -> io::Result<i32>` | Blocks until process exits, returns exit code |
-| `kill` | `(&self)` | Calls `TerminateProcess` with exit code 1 |
+| `kill` | `(&self)` | Calls `TerminateProcess`, then `ClosePseudoConsole` to break the output pipe and unblock the reader thread |
 
-**Drop:** Cleans up in order: `DeleteProcThreadAttributeList`, `ClosePseudoConsole`, then closes all handles (`pty.rs:200-215`).
+**Drop:** Cleans up in order: `DeleteProcThreadAttributeList`, `ClosePseudoConsole`, locks input_write mutex to close handle, then closes remaining handles (`pty.rs:260-279`).
 
 #### SessionRegistry (`session.rs`)
 
@@ -238,12 +246,13 @@ Manages a `HashMap<String, SessionEntry>` protected by a `Mutex`. Each entry hol
 | `MAX_SESSIONS` | 10 | Maximum concurrent sessions |
 | `OUTPUT_BATCH_MS` | 16 | Output batching interval (~60fps) |
 | `MAX_WRITE_SIZE` | 65536 | Maximum single write size (64 KB) |
+| `HEARTBEAT_TIMEOUT_SECS` | 60 | Heartbeat timeout (12x safety margin over 5s heartbeat interval) |
 
 **PtyEvent enum** (`session.rs:19-24`):
 
 ```rust
 pub enum PtyEvent {
-    Output { data: String },  // base64-encoded binary
+    Output { data: String },  // UTF-8 text (lossy-converted)
     Exit { code: i32 },
 }
 ```
@@ -255,13 +264,21 @@ Serialized with `serde(rename_all = "camelCase", tag = "type")`.
 1. Checks session count against `MAX_SESSIONS`.
 2. Creates `PtySession` via `PtySession::spawn()`.
 3. Generates a UUID session ID.
-4. Spawns an **output reader thread** that reads 4096-byte chunks, accumulates into a buffer, and flushes as base64-encoded `PtyEvent::Output` when: (a) 16ms batch timer expires, (b) accumulator reaches 8192 bytes, or (c) a partial read indicates the process is idle.
+4. Spawns an **output reader thread** that reads 16384-byte chunks, accumulates into a buffer (capacity 32768), and flushes as UTF-8 text `PtyEvent::Output` when: (a) 16ms batch timer expires, (b) accumulator reaches capacity, or (c) a partial read indicates the process is idle. Maintains a `utf8_remainder` buffer (up to 3 bytes) to reassemble multi-byte UTF-8 sequences split across reads. Before flushing, prepends remainder from previous flush; after flushing, checks for incomplete trailing sequence via `incomplete_utf8_tail()` and saves it. Output is sent as UTF-8 text (lossy-converted), not base64.
 5. Spawns an **exit watcher thread** that calls `wait_for_exit()` and sends `PtyEvent::Exit`.
 6. Inserts the session entry and returns the session ID.
 
+**`incomplete_utf8_tail()`**: Examines trailing bytes to detect incomplete multi-byte UTF-8 sequences at buffer boundaries. Returns the count of bytes to hold back (0-3).
+
 **Win32 Job Object** (`session.rs:37-47`): On creation, the registry creates a Win32 Job Object with `limit_kill_on_job_close` and assigns the current process. This ensures all child processes are killed if the launcher crashes.
 
-**Reaper thread** (`session.rs:185-203`): Runs every 10 seconds, kills sessions whose `last_heartbeat` is older than 30 seconds.
+**Reaper thread** (`session.rs:185-220`): Runs every 10 seconds, uses a **two-phase reaper pattern**: Phase 1: collect stale session IDs and their `Arc<PtySession>` under the lock. Phase 2: drop the lock, then kill outside. This avoids holding the registry mutex during blocking Win32 calls. Sessions whose `last_heartbeat` is older than 60 seconds are considered stale. Includes standby detection: resets all heartbeats if elapsed time since last check exceeds 30 seconds.
+
+**`kill()`**: Removes entry from HashMap, then calls `pty.kill()` outside the lock. When `kill()` calls `ClosePseudoConsole`, it breaks the output pipe. The reader thread's `ReadFile` returns an error, which exits the loop and drops the `Arc<PtySession>`.
+
+**`kill_all()`**: Drains all sessions under the lock, then kills each outside the lock.
+
+**`write()` and `resize()`**: Clones `Arc<PtySession>` under the global lock, drops the lock, then performs I/O outside the critical section.
 
 ### Project Scanning
 
@@ -305,21 +322,22 @@ Validates the project name (no path separators, no `..`, no ANSI escape sequence
 
 **Source:** `app/src-tauri/src/projects.rs:13-68, 90-216`
 
-All data files are stored in `dirs::data_local_dir() / "claude-launcher"` (typically `%LOCALAPPDATA%\claude-launcher`).
+All data files are stored in `dirs::data_local_dir() / "anvil"` (typically `%LOCALAPPDATA%\anvil`).
 
 | File | Path | Purpose |
 |------|------|---------|
-| Settings | `claude-launcher-settings.json` | User preferences |
-| Settings backup | `claude-launcher-settings.json.bak` | Previous settings |
-| Usage data | `claude-launcher-usage.json` | Project usage tracking |
-| Session data | `claude-launcher-session.json` | Tab restore state |
-| Log file | `claude-launcher.log` | Application log |
+| Settings | `anvil-settings.json` | User preferences |
+| Settings backup | `anvil-settings.json.bak` | Previous settings |
+| Usage data | `anvil-usage.json` | Project usage tracking |
+| Session data | `anvil-session.json` | Tab restore state |
+| Log file | `anvil.log` | Application log |
 
 #### Settings struct (`projects.rs:13-37`)
 
 | Field | Type | Default |
 |-------|------|---------|
 | `version` | `u32` | `1` |
+| `tool_idx` | `usize` | `0` |
 | `model_idx` | `usize` | `0` |
 | `effort_idx` | `usize` | `0` |
 | `sort_idx` | `usize` | `0` |
@@ -327,7 +345,9 @@ All data files are stored in `dirs::data_local_dir() / "claude-launcher"` (typic
 | `font_family` | `String` | `"Cascadia Code"` |
 | `font_size` | `u32` | `14` |
 | `skip_perms` | `bool` | `false` |
+| `security_gate` | `bool` | `false` |
 | `project_dirs` | `Vec<String>` | `["D:\\Projects"]` or `CLAUDE_LAUNCHER_PROJECTS_DIR` env var |
+| `single_project_dirs` | `Vec<String>` | `[]` |
 | `project_labels` | `HashMap<String, String>` | `{}` |
 | `extra` | `HashMap<String, Value>` | `{}` (serde flatten, forward-compatible) |
 
@@ -350,11 +370,18 @@ pub struct UsageEntry {
 
 Session data is an opaque `serde_json::Value` with a 1 MB size cap. Written atomically via temp file + rename.
 
-### Claude CLI Integration
+### CLI Tool Integration
 
-**Source:** `app/src-tauri/src/claude.rs`
+**Source:** `app/src-tauri/src/tools.rs`
 
-#### Models (`claude.rs:3-9`)
+#### Tools
+
+| Index | Name | Package |
+|-------|------|---------|
+| 0 | Claude Code | `@anthropic-ai/claude-code` |
+| 1 | Gemini CLI | `@google/gemini-cli` |
+
+#### Models (`tools.rs:3-9`, Claude only)
 
 | Index | Display | Model ID |
 |-------|---------|----------|
@@ -364,7 +391,7 @@ Session data is an opaque `serde_json::Value` with a 1 MB size cap. Written atom
 | 3 | `sonnet [1M]` | `claude-sonnet-4-6[1m]` |
 | 4 | `opus [1M]` | `claude-opus-4-6[1m]` |
 
-#### Effort levels (`claude.rs:11`)
+#### Effort levels (`tools.rs:11`, Claude only)
 
 | Index | Value |
 |-------|-------|
@@ -372,21 +399,21 @@ Session data is an opaque `serde_json::Value` with a 1 MB size cap. Written atom
 | 1 | `medium` |
 | 2 | `low` |
 
-#### resolve_claude_exe (`claude.rs:13-26`)
+#### resolve_claude_exe (`tools.rs:13-26`)
 
 1. Try `which::which("claude")` (PATH lookup).
 2. Fallback: `~/.local/bin/claude.exe`.
 3. Error if not found.
 
-#### build_command (`claude.rs:28-63`)
+#### build_command (`tools.rs:28-63`)
 
 Builds the command line arguments: `--model <id> --effort <level>`, plus `--dangerously-skip-permissions` if enabled.
 
 If the resolved executable is a `.cmd` or `.bat` shim, wraps it with `cmd.exe /c "<path>"` to handle spaces.
 
-#### claude_env (`claude.rs:65-71`)
+#### claude_env (`tools.rs:65-71`)
 
-Sets three environment variables for the spawned process:
+Sets three environment variables for the spawned Claude process:
 
 | Variable | Value |
 |----------|-------|
@@ -394,14 +421,42 @@ Sets three environment variables for the spawned process:
 | `TERM` | `xterm-256color` |
 | `COLORTERM` | `truecolor` |
 
+#### resolve_gemini_exe (`tools.rs`)
+
+1. Try `which::which("gemini")` (PATH lookup).
+2. Error if not found.
+
+#### build_gemini_command (`tools.rs`)
+
+Builds the Gemini CLI command line. If the resolved executable is a `.cmd` or `.bat` shim, wraps it with `cmd.exe /c "<path>"` to handle spaces.
+
+#### gemini_env (`tools.rs`)
+
+Sets environment variables for the spawned Gemini process:
+
+| Variable | Value |
+|----------|-------|
+| `TERM` | `xterm-256color` |
+| `COLORTERM` | `truecolor` |
+
 ### Logging
 
 **Source:** `app/src-tauri/src/logging.rs`
 
-- Log file truncated on each startup (single session log).
+- Log file is placed next to the executable (not in a separate data directory).
+- Log **rotation** on startup: `.log` -> `.log.1` -> `.log.2` -> `.log.3` (keeps up to 3 rotated files).
+- Mid-session rotation when file reaches 10 MB.
 - Output goes to both stderr and the log file.
 - Timestamp format: `YYYY-MM-DD HH:MM:SS.mmm` (UTC).
+- Sanitizes newlines in log messages to prevent log forging.
+- Only flushes on ERROR level to reduce syscalls.
 - Three macros: `log_info!`, `log_error!`, `log_debug!`.
+
+### ProjectWatcher
+
+**Source:** `app/src-tauri/src/watcher.rs`
+
+Watches project container directories for create/remove/rename events. Uses the `notify` crate with trailing-edge debounce (1 second quiet period). Emits `projects-changed` Tauri event to trigger frontend rescan. Updated when settings change (via the `save_settings` command).
 
 ---
 
@@ -464,7 +519,7 @@ Root component. Wraps everything in `ProjectsProvider`. The inner `AppContent` u
 - `TabBar` for tab switching
 - A `.tab-content` container with one panel per tab
 
-Tabs of type `"new-tab"` render `NewTabPage`; tabs of type `"terminal"` render `Terminal` wrapped in `ErrorBoundary`.
+Tabs of type `"new-tab"` render `NewTabPage`; tabs of type `"terminal"` render `Terminal` wrapped in `ErrorBoundary`; tabs of type `"about"` render `AboutPage`.
 
 **Global keyboard shortcuts** (`App.tsx:45-64`):
 
@@ -526,7 +581,7 @@ Wrapped in `React.memo`.
 **Lifecycle:**
 
 1. **Mount:** Creates xterm.js instance with WebGL addon (falls back to canvas on error). Attaches `FitAddon` and a `ResizeObserver`.
-2. **Spawn:** Deferred to `requestAnimationFrame` so the container has final layout. Calls `spawnClaude()` with terminal dimensions.
+2. **Spawn:** Deferred to `requestAnimationFrame` so the container has final layout. Calls `spawnTool()` with terminal dimensions.
 3. **Input:** `xterm.onData` writes to PTY via `writePty()`. After process exit, any keypress requests tab close.
 4. **Output:** Callback writes `Uint8Array` to xterm. If tab is not active, triggers `onNewOutput`.
 5. **Heartbeat:** 5-second interval calls `sendHeartbeat()`.
@@ -619,6 +674,36 @@ Closes on Escape (captured in capture phase to intercept before `NewTabPage`) an
 
 Class component wrapping `Terminal`. On error, displays the error message and a "Close Tab" button. Logs to console via `componentDidCatch`.
 
+#### Minimap (`Minimap.tsx`)
+
+**Source:** `app/src/components/Minimap.tsx`
+
+**Props:**
+
+| Prop | Type | Description |
+|------|------|-------------|
+| `xterm` | `Terminal` | xterm.js Terminal instance |
+| `isActive` | `boolean` | Whether the parent tab is visible |
+| `bookmarksRef` | `RefObject<Set<number>>` | Ref to Set of bookmarked line numbers |
+
+**Features:**
+- 2px x 3px character rendering on canvas
+- Bookmark indicators for bookmarked lines
+- DPI-aware canvas (adjusts for devicePixelRatio)
+- Click-to-scroll with bookmark snapping
+- Drag scrolling support
+
+**Performance:**
+- Cached theme colors, invalidated on theme change via `MutationObserver`
+- Separate viewport-only updates from full canvas redraws
+- RAF-throttled rendering
+
+#### AboutPage (`AboutPage.tsx`)
+
+**Source:** `app/src/components/AboutPage.tsx`
+
+ASCII logo with module-level grid cache. Displays version and app info.
+
 ### Hooks
 
 #### useTabManager (`useTabManager.ts`)
@@ -632,9 +717,10 @@ Manages tab lifecycle with `useState`. Initializes with one `new-tab` tab.
 ```typescript
 interface Tab {
   id: string;                  // crypto.randomUUID()
-  type: "new-tab" | "terminal";
+  type: "new-tab" | "terminal" | "about";
   projectPath?: string;
   projectName?: string;
+  toolIdx?: number;
   modelIdx?: number;
   effortIdx?: number;
   skipPerms?: boolean;
@@ -657,6 +743,7 @@ interface Tab {
 | `activateTab` | `(id: string) => void` | Switches active tab, clears output indicator |
 | `nextTab` | `() => void` | Cycles to next tab (wraps) |
 | `prevTab` | `() => void` | Cycles to previous tab (wraps) |
+| `markNewOutput` | `(tabId: string) => void` | Marks tab as having new output (guarded -- skips if already set) |
 
 **Session persistence** (`useTabManager.ts:48-102`):
 
@@ -705,13 +792,13 @@ Not a React hook -- exports standalone async functions that wrap Tauri IPC calls
 
 | Function | Signature | IPC Command |
 |----------|-----------|-------------|
-| `spawnClaude` | `(projectPath, modelIdx, effortIdx, skipPerms, cols, rows, onOutput, onExit) => Promise<{sessionId, channel}>` | `spawn_claude` |
+| `spawnTool` | `(projectPath, toolIdx, modelIdx, effortIdx, skipPerms, cols, rows, onOutput, onExit) => Promise<{sessionId, channel}>` | `spawn_tool` |
 | `writePty` | `(sessionId, data) => Promise<void>` | `write_pty` |
 | `resizePty` | `(sessionId, cols, rows) => Promise<void>` | `resize_pty` |
 | `killSession` | `(sessionId) => Promise<void>` | `kill_session` |
 | `sendHeartbeat` | `(sessionId) => Promise<void>` | `heartbeat` |
 
-`spawnClaude` creates a Tauri `Channel<PtyEvent>` and decodes base64 output data to `Uint8Array` before calling `onOutput`.
+`spawnTool` creates a Tauri `Channel<PtyEvent>` and writes UTF-8 text output directly to xterm (no base64 decoding needed).
 
 ### Context
 
@@ -726,9 +813,9 @@ Wraps `useProjects()` in a React Context so all `NewTabPage` instances share the
 
 ### Theme System
 
-**Source:** `app/src/types.ts:54-150`, `app/src/themes.ts`
+**Source:** `app/src/types.ts:60-177`, `app/src/themes.ts`
 
-8 built-in dark themes:
+10 built-in dark themes:
 
 | Index | Name |
 |-------|------|
@@ -740,6 +827,10 @@ Wraps `useProjects()` in a React Context so all `NewTabPage` instances share the
 | 5 | Gruvbox Dark |
 | 6 | Tokyo Night |
 | 7 | Monokai |
+| 8 | Anvil Forge [retro] |
+| 9 | Guybrush [retro] |
+
+Themes 8-9 have a `retro: true` flag which enables retro mode CSS.
 
 Each theme defines 14 color values:
 
@@ -772,13 +863,14 @@ Complete list of Tauri IPC commands registered in `main.rs:31-47` with their sig
 
 ### PTY Management
 
-#### `spawn_claude`
+#### `spawn_tool`
 
-Spawns a new Claude Code CLI session in a pseudo-console.
+Spawns a new CLI tool session in a pseudo-console.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `projectPath` | `String` | Absolute path to project directory |
+| `toolIdx` | `usize` | Index into TOOLS array (0=claude, 1=gemini) |
 | `modelIdx` | `usize` | Index into MODELS array (0-4) |
 | `effortIdx` | `usize` | Index into EFFORTS array (0-2) |
 | `skipPerms` | `bool` | Pass `--dangerously-skip-permissions` |
@@ -790,9 +882,9 @@ Spawns a new Claude Code CLI session in a pseudo-console.
 
 **Validation:** Rejects UNC paths, non-directory paths, and out-of-range dimensions. Max 10 concurrent sessions.
 
-**Source:** `commands.rs:9-60`
+**Source:** `commands.rs:11-76`
 
-#### `write_pty`
+#### `write_pty` (synchronous)
 
 Writes data to a PTY session's input.
 
@@ -805,7 +897,7 @@ Writes data to a PTY session's input.
 
 **Source:** `commands.rs:62-69`
 
-#### `resize_pty`
+#### `resize_pty` (synchronous)
 
 Resizes a PTY session's terminal dimensions.
 
@@ -819,7 +911,7 @@ Resizes a PTY session's terminal dimensions.
 
 **Source:** `commands.rs:71-82`
 
-#### `kill_session`
+#### `kill_session` (synchronous)
 
 Terminates a PTY session.
 
@@ -831,7 +923,7 @@ Terminates a PTY session.
 
 **Source:** `commands.rs:84-91`
 
-#### `heartbeat`
+#### `heartbeat` (synchronous)
 
 Updates the last heartbeat timestamp for a session (prevents reaper from killing it).
 
@@ -843,7 +935,7 @@ Updates the last heartbeat timestamp for a session (prevents reaper from killing
 
 **Source:** `commands.rs:93-99`
 
-#### `active_session_count`
+#### `active_session_count` (synchronous)
 
 Returns the number of active PTY sessions.
 
@@ -862,6 +954,7 @@ Scans configured directories for projects.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `projectDirs` | `Vec<String>` | Directories to scan |
+| `singleProjectDirs` | `Vec<String>` | Individual project directories (not scanned for subdirs) |
 | `labels` | `HashMap<String, String>` | Path-to-label mapping |
 
 **Returns:** `Result<Vec<ProjectInfo>, String>`
@@ -910,7 +1003,7 @@ Loads settings from disk. Falls back to backup file, then defaults.
 
 #### `save_settings`
 
-Persists settings to disk with atomic write and backup.
+Persists settings to disk with atomic write and backup. Also updates the ProjectWatcher with potentially changed directories.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -966,16 +1059,38 @@ Loads saved tab session state. Returns `null` if no session exists or file excee
 
 **Source:** `commands.rs:200-206`
 
+#### `save_clipboard_image`
+
+Saves clipboard image to temp PNG file. Returns path string. Cleans up files older than 1 hour. Max dimension 8192x8192.
+
+**Parameters:** None
+
+**Returns:** `Result<String, String>` -- path to temp PNG file.
+
+**Source:** `commands.rs:233-285`
+
+#### `set_window_corner_preference`
+
+Sets DWM window corner preference (rounded or square for retro mode).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `retro` | `bool` | Use square corners for retro themes |
+
+**Returns:** `Result<(), String>`
+
+**Source:** `commands.rs:211-230`
+
 ### Channel Events (Backend to Frontend)
 
-The `spawn_claude` command accepts a Tauri `Channel<PtyEvent>`. The backend sends events through this channel:
+The `spawn_tool` command accepts a Tauri `Channel<PtyEvent>`. The backend sends events through this channel:
 
 | Event | Fields | Description |
 |-------|--------|-------------|
-| `output` | `data: string` | Base64-encoded terminal output bytes |
+| `output` | `data: string` | UTF-8 terminal output text |
 | `exit` | `code: number` | Process exit code |
 
-Frontend decodes base64 to `Uint8Array` via `atob()` in `usePty.ts:20`.
+Frontend writes UTF-8 text output directly to xterm (no base64 decoding needed).
 
 ---
 
@@ -1001,7 +1116,8 @@ Frontend decodes base64 to `Uint8Array` via `atob()` in `usePty.ts:20`.
 | Escape | Clear filter (if set) or close tab | `NewTabPage.tsx:139-145` |
 | Backspace | Delete last filter character | `NewTabPage.tsx:201-204` |
 | Any printable character | Append to filter | `NewTabPage.tsx:206-211` |
-| Tab | Cycle model | `NewTabPage.tsx:147-151` |
+| F1 | Cycle tool (claude/gemini) | `NewTabPage.tsx` |
+| Tab | Cycle model (Claude only) | `NewTabPage.tsx:147-151` |
 | F2 | Cycle effort level | `NewTabPage.tsx:153-157` |
 | F3 | Cycle sort order | `NewTabPage.tsx:159-163` |
 | F4 | Toggle skip-permissions | `NewTabPage.tsx:165-167` |
@@ -1012,11 +1128,14 @@ Frontend decodes base64 to `Uint8Array` via `atob()` in `usePty.ts:20`.
 | F9 | Theme picker (modal) | `NewTabPage.tsx:189-191` |
 | F10 | Quick launch (modal) | `NewTabPage.tsx:193-195` |
 | F11 | Font settings (modal) | `NewTabPage.tsx:197-199` |
+| F12 | About page | `NewTabPage.tsx` |
 
 ### Terminal (active terminal tab)
 
 | Key | Action | Source |
 |-----|--------|--------|
+| Ctrl+C | Copy selection (or SIGINT if no selection) | `Terminal.tsx` |
+| Ctrl+V | Paste (text or image path) | `Terminal.tsx` |
 | Any key (after process exit) | Close tab | `Terminal.tsx:114-116` |
 | File drag-and-drop | Write safe paths to PTY | `Terminal.tsx:200-215` |
 
@@ -1028,11 +1147,12 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
 
 ### Settings Schema
 
-**Storage:** `%LOCALAPPDATA%\claude-launcher\claude-launcher-settings.json`
+**Storage:** `%LOCALAPPDATA%\anvil\anvil-settings.json`
 
 ```json
 {
   "version": 1,
+  "tool_idx": 0,
   "model_idx": 0,
   "effort_idx": 0,
   "sort_idx": 0,
@@ -1040,7 +1160,9 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
   "font_family": "Cascadia Code",
   "font_size": 14,
   "skip_perms": false,
+  "security_gate": false,
   "project_dirs": ["D:\\Projects"],
+  "single_project_dirs": [],
   "project_labels": {}
 }
 ```
@@ -1049,7 +1171,14 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
 
 ### Constants
 
-#### Models (`types.ts:43-49`, `claude.rs:3-9`)
+#### Tools (`types.ts:47`, `tools.rs`)
+
+| Index | Name |
+|-------|------|
+| 0 | claude |
+| 1 | gemini |
+
+#### Models (`types.ts:47-58`, `tools.rs:3-9`)
 
 | Index | Display Name | CLI Model ID |
 |-------|-------------|--------------|
@@ -1075,7 +1204,7 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
 | 1 | last used |
 | 2 | most used |
 
-#### Themes (`types.ts:77-150`)
+#### Themes (`types.ts:84-177`)
 
 | Index | Name |
 |-------|------|
@@ -1087,6 +1216,10 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
 | 5 | Gruvbox Dark |
 | 6 | Tokyo Night |
 | 7 | Monokai |
+| 8 | Anvil Forge [retro] |
+| 9 | Guybrush [retro] |
+
+Themes 8-9 have a `retro: true` flag which enables retro mode CSS.
 
 ### CSS Design Tokens
 
@@ -1095,11 +1228,12 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
 | Category | Tokens |
 |----------|--------|
 | Colors | `--bg`, `--surface`, `--mantle`, `--crust`, `--text`, `--text-dim`, `--overlay0`, `--overlay1`, `--accent`, `--red`, `--green`, `--yellow` |
-| Layout | `--tab-height` (36px) |
+| Layout | `--tab-height` (42px), `--status-bar-height` (28px), `--tab-max-width` (200px) |
 | Spacing | `--space-1` (4px), `--space-2` (8px), `--space-3` (12px), `--space-4` (16px), `--space-6` (24px), `--space-8` (32px), `--space-12` (48px) |
 | Typography | `--text-xs` (10px), `--text-sm` (11px), `--text-base` (13px), `--text-md` (14px), `--text-lg` (16px), `--text-xl` (18px) |
 | Radii | `--radius-sm` (4px), `--radius-md` (6px) |
-| Overlays | `--hover-overlay` (rgba 0.1), `--hover-overlay-subtle` (rgba 0.05) |
+| Overlays | `--hover-overlay` (rgba 0.1), `--hover-overlay-subtle` (rgba 0.05), `--backdrop`, `--shadow-modal` |
+| Font | `--font-mono` |
 | Z-index | `--z-resize` (100), `--z-modal` (1000) |
 
 ### Environment Variables
@@ -1107,13 +1241,24 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
 | Variable | Used In | Purpose |
 |----------|---------|---------|
 | `CLAUDE_LAUNCHER_PROJECTS_DIR` | `projects.rs:48` | Override default project directory |
-| `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | `claude.rs:67` | Set on spawned Claude process |
-| `TERM` | `claude.rs:68` | Set to `xterm-256color` on spawned process |
-| `COLORTERM` | `claude.rs:69` | Set to `truecolor` on spawned process |
+| `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | `tools.rs:67` | Set on spawned Claude process |
+| `TERM` | `tools.rs:68` | Set to `xterm-256color` on spawned process (Claude and Gemini) |
+| `COLORTERM` | `tools.rs:69` | Set to `truecolor` on spawned process (Claude and Gemini) |
 
 ---
 
-## 9. Development Guide
+## 9. Architecture Notes
+
+- **Per-session write mutex:** Each `PtySession` has its own `Mutex<HANDLE>` for write serialization. The global sessions mutex is only held briefly for lookups, never during I/O.
+- **Two-phase reaper:** Collects stale session IDs under the global lock, releases lock, then kills individually.
+- **Pseudo console cleanup:** `kill()` closes the HPCON handle to break the pipe and unblock the reader thread, preventing handle/thread leaks.
+- **UTF-8 boundary handling:** The reader thread maintains a remainder buffer to reassemble multi-byte sequences split across reads.
+- **WebGL resilience:** `Terminal.tsx` uses multi-layer context loss detection (addon callback, canvas DOM event, periodic health check) with automatic fallback to canvas renderer.
+- **Theme crossfade:** Structural CSS containers transition `background-color` and `color` on theme switch (150ms ease-out).
+
+---
+
+## 10. Development Guide
 
 ### Adding a New IPC Command
 
@@ -1179,8 +1324,8 @@ Ctrl+T, Ctrl+F4, and Ctrl+Tab are intercepted by the custom key handler and pass
 ### Adding a New Model
 
 1. Add to `MODELS` in both:
-   - `app/src-tauri/src/claude.rs:3-9` (Rust, tuple of display name + model ID)
-   - `app/src/types.ts:43-49` (TypeScript, object with `display` and `id`)
+   - `app/src-tauri/src/tools.rs:3-9` (Rust, tuple of display name + model ID)
+   - `app/src/types.ts:47-58` (TypeScript, object with `display` and `id`)
 
 2. The Tab key cycling and StatusBar will automatically include it.
 
@@ -1217,7 +1362,9 @@ app/
     components/
       TabBar.tsx + .css         # Tab bar with window controls
       Terminal.tsx + .css       # xterm.js terminal wrapper
+      Minimap.tsx + .css        # Terminal minimap with bookmarks
       NewTabPage.tsx + .css     # Project picker + modals
+      AboutPage.tsx + .css      # About page with ASCII logo
       ProjectList.tsx + .css    # Scrollable project list
       StatusBar.tsx + .css      # Settings status bar
       Modal.tsx + .css          # Reusable modal
@@ -1235,8 +1382,10 @@ app/
       pty.rs                    # Win32 pseudo-console
       session.rs                # Session registry + reaper
       projects.rs               # Project scanning + persistence
-      claude.rs                 # Claude CLI integration
+      tools.rs                  # CLI tool resolution (Claude, Gemini)
       logging.rs                # File + stderr logging
+      watcher.rs                # Filesystem watcher for project dirs
+      marketplace.rs            # Anvil marketplace sync
     tauri.conf.json             # Tauri configuration
     Cargo.toml                  # Rust dependencies
   package.json                  # Frontend dependencies
