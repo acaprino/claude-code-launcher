@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { ProjectInfo, Settings, UsageData, SORT_ORDERS } from "../types";
 import { applyTheme } from "../themes";
+
+function scanProjects(s: Settings): Promise<ProjectInfo[]> {
+  return invoke<ProjectInfo[]>("scan_projects", {
+    projectDirs: s.project_dirs,
+    singleProjectDirs: s.single_project_dirs,
+    labels: s.project_labels,
+  });
+}
 
 export function useProjects() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -24,11 +33,7 @@ export function useProjects() {
       setSettings(s);
       setUsage(u);
 
-      const projs = await invoke<ProjectInfo[]>("scan_projects", {
-        projectDirs: s.project_dirs,
-        singleProjectDirs: s.single_project_dirs,
-        labels: s.project_labels,
-      });
+      const projs = await scanProjects(s);
       setProjects(projs);
     } catch (err) {
       console.error("Failed to load projects:", err);
@@ -41,6 +46,16 @@ export function useProjects() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Auto-refresh when filesystem changes are detected in project directories
+  useEffect(() => {
+    const unlisten = listen("projects-changed", () => {
+      const s = settingsRef.current;
+      if (!s) return;
+      scanProjects(s).then(setProjects).catch(console.error);
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
 
   // Apply theme whenever theme_idx changes
   const themeIdx = settings?.theme_idx ?? 0;
@@ -66,11 +81,7 @@ export function useProjects() {
         // Rescan projects if dirs or labels changed
         if (updates.project_dirs || updates.single_project_dirs || updates.project_labels) {
           setLoading(true);
-          const projs = await invoke<ProjectInfo[]>("scan_projects", {
-            projectDirs: newSettings.project_dirs,
-            singleProjectDirs: newSettings.single_project_dirs,
-            labels: newSettings.project_labels,
-          });
+          const projs = await scanProjects(newSettings);
           setProjects(projs);
           setLoading(false);
         }
@@ -135,11 +146,7 @@ export function useProjects() {
     const s = settingsRef.current;
     if (!s) return;
     setLoading(true);
-    const projs = await invoke<ProjectInfo[]>("scan_projects", {
-      projectDirs: s.project_dirs,
-      singleProjectDirs: s.single_project_dirs,
-      labels: s.project_labels,
-    });
+    const projs = await scanProjects(s);
     setProjects(projs);
     setLoading(false);
   }, []);

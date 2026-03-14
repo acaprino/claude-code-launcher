@@ -8,9 +8,12 @@ mod commands;
 mod projects;
 mod pty;
 mod session;
+mod watcher;
 
 use std::sync::Arc;
+use tauri::Manager;
 use session::SessionRegistry;
+use watcher::ProjectWatcher;
 
 fn main() {
     logging::init();
@@ -49,6 +52,14 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .manage(registry)
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let settings = projects::load_settings();
+            let watcher = ProjectWatcher::new(handle);
+            watcher.watch_dirs(&settings.project_dirs, &settings.single_project_dirs);
+            app.manage(Arc::new(watcher));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::spawn_tool,
             commands::write_pty,

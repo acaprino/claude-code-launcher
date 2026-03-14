@@ -26,6 +26,7 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-shell = "2"
 png = "0.17"
 arboard = { version = "3", features = ["image-data"] }
+notify = "6"
 
 raw-window-handle = "0.6"
 

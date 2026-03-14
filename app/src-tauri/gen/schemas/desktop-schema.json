@@ -441,6 +441,12 @@
           "markdownDescription": "Allows resizing a PTY session"
         },
         {
+          "description": "Allows saving clipboard image as temp PNG",
+          "type": "string",
+          "const": "allow-save-clipboard-image",
+          "markdownDescription": "Allows saving clipboard image as temp PNG"
+        },
+        {
           "description": "Allows saving session state",
           "type": "string",
           "const": "allow-save-session",

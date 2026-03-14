@@ -5,6 +5,7 @@ use tauri::State;
 use crate::tools;
 use crate::projects::{self, ProjectInfo, Settings, UsageData};
 use crate::session::{PtyEvent, SessionRegistry};
+use crate::watcher::ProjectWatcher;
 
 #[tauri::command]
 pub async fn spawn_tool(
@@ -145,13 +146,21 @@ pub async fn load_settings() -> Result<Settings, String> {
 }
 
 #[tauri::command]
-pub async fn save_settings(settings: Settings) -> Result<(), String> {
+pub async fn save_settings(
+    watcher: State<'_, Arc<ProjectWatcher>>,
+    settings: Settings,
+) -> Result<(), String> {
     log_info!("save_settings: dirs={:?}, single={:?}", settings.project_dirs, settings.single_project_dirs);
+    let dirs = settings.project_dirs.clone();
+    let single_dirs = settings.single_project_dirs.clone();
     tokio::task::spawn_blocking(move || {
         projects::save_settings(&settings).map_err(|e| format!("Failed to save settings: {e}"))
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
+    .map_err(|e| format!("Task failed: {e}"))??;
+    // Update watcher with potentially changed project directories
+    watcher.watch_dirs(&dirs, &single_dirs);
+    Ok(())
 }
 
 #[tauri::command]
