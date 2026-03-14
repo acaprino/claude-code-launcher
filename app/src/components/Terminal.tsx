@@ -402,6 +402,8 @@ export default memo(function Terminal({
     let lastCols = 0;
     let lastRows = 0;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let cursorShowTimer: ReturnType<typeof setTimeout> | undefined;
+    const CURSOR_IDLE_MS = 80;
 
     const syncPtySize = (debounce: boolean) => {
       const cols = xterm.cols;
@@ -484,8 +486,6 @@ export default memo(function Terminal({
       let bannerCooldownEnd = 0;
       // Debounced cursor show — hide during all output, show only after idle.
       // Prevents the cursor from flickering at intermediate write positions.
-      let cursorShowTimer: ReturnType<typeof setTimeout> | undefined;
-      const CURSOR_IDLE_MS = 80;
 
       spawnClaude(
         projectPath,
