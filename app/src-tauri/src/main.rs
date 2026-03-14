@@ -71,10 +71,10 @@ fn main() {
             watcher.watch_dirs(&settings.project_dirs, &settings.single_project_dirs);
             app.manage(Arc::new(watcher));
 
-            // Sync anvil-toolset marketplace in background (install or update)
-            std::thread::spawn(|| {
-                marketplace::sync_marketplace();
-            });
+            // Sync anvil-toolset marketplace before any session can start.
+            // Runs synchronously to avoid race conditions with Claude Code
+            // reading/writing settings.json concurrently.
+            marketplace::sync_marketplace();
 
             Ok(())
         })
