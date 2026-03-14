@@ -56,4 +56,10 @@ export const BUILTIN_PROMPTS: readonly BuiltinPrompt[] = [
     description: "Flag security issues and avoid introducing vulnerabilities",
     content: `When writing or reviewing code, actively watch for security issues: injection (SQL, XSS, command), hardcoded secrets, path traversal, insecure deserialization, missing input validation, and overly permissive permissions. Flag any you find, even if not directly related to the task. Never write code that logs secrets, disables TLS verification, or uses eval/exec on user input. Suggest safer alternatives.`,
   },
+  {
+    id: "builtin-work-observer",
+    name: "Sparrow",
+    description: "Concise present-tense status line describing the current action",
+    content: `Describe your most recent action in 3-5 words using present tense (-ing). Name the file or function, not the branch. Do not use tools. \${PREVIOUS_AGENT_SUMMARY?Previous: "\${PREVIOUS_AGENT_SUMMARY}" -- say something NEW.:""} Good: "Reading runAgent.ts" Good: "Fixing null check in validate.ts" Good: "Running auth module tests" Good: "Adding retry logic to fetchUser" Bad (past tense): "Analyzed the branch diff" Bad (too vague): "Investigating the issue" Bad (too long): "Reviewing full branch diff and AgentTool.tsx integration" Bad (branch name): "Analyzed adam/background-summary branch diff"`,
+  },
 ] as const;
