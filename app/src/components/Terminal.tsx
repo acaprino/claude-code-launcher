@@ -122,17 +122,34 @@ export default memo(function Terminal({
     xterm.loadAddon(fitAddon);
     xterm.open(containerRef.current);
 
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        // Gracefully fall back to canvas renderer on GPU context loss.
-        // This prevents a single tab's WebGL issue from affecting others.
-        try { webglAddon.dispose(); } catch { /* already disposed */ }
-      });
-      xterm.loadAddon(webglAddon);
-    } catch {
-      // Canvas renderer fallback — WebGL not available or failed to init
-    }
+    // Track WebGL addon for recovery after context loss (e.g. system standby).
+    // Retry cap prevents futile reloads on hardware without WebGL support.
+    let currentWebgl: WebglAddon | null = null;
+    let webglFailures = 0;
+    const MAX_WEBGL_RETRIES = 3;
+
+    const loadWebgl = () => {
+      if (currentWebgl || webglFailures >= MAX_WEBGL_RETRIES) return;
+      let addon: WebglAddon | null = null;
+      try {
+        addon = new WebglAddon();
+        addon.onContextLoss(() => {
+          // Dispose broken WebGL and force canvas re-render so text is readable
+          try { addon!.dispose(); } catch { /* already disposed */ }
+          currentWebgl = null;
+          webglFailures++;
+          if (!cancelled) xterm.refresh(0, xterm.rows - 1);
+        });
+        xterm.loadAddon(addon);
+        currentWebgl = addon;
+        webglFailures = 0;
+      } catch {
+        try { addon?.dispose(); } catch { /* ok */ }
+        currentWebgl = null;
+        webglFailures++;
+      }
+    };
+    loadWebgl();
 
     xterm.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== "keydown") return true;
@@ -324,16 +341,28 @@ export default memo(function Terminal({
     // If the heartbeat fails, the session was already reaped — surface exit to user.
     const handleVisibilityChange = () => {
       if (cancelled) return;
-      if (document.visibilityState === "visible" && sessionIdRef.current && !exitedRef.current) {
-        sendHeartbeat(sessionIdRef.current).catch(() => {
-          if (!exitedRef.current) {
-            exitedRef.current = true;
-            xtermRef.current?.write(
-              `\r\n\x1b[90m[Session lost during standby. Press any key to close tab]\x1b[0m`,
-            );
-            onExitRef.current(tabIdRef.current, -1);
+      if (document.visibilityState === "visible") {
+        // After wake from standby, WebGL context may be silently lost.
+        // Attempt to reload WebGL; if it fails, force a canvas re-render
+        // so terminal text remains readable.
+        if (!currentWebgl) {
+          loadWebgl();
+          if (!currentWebgl) {
+            // WebGL still unavailable — ensure canvas renderer is up to date
+            xterm.refresh(0, xterm.rows - 1);
           }
-        });
+        }
+        if (sessionIdRef.current && !exitedRef.current) {
+          sendHeartbeat(sessionIdRef.current).catch(() => {
+            if (!exitedRef.current) {
+              exitedRef.current = true;
+              xtermRef.current?.write(
+                `\r\n\x1b[90m[Session lost during standby. Press any key to close tab]\x1b[0m`,
+              );
+              onExitRef.current(tabIdRef.current, -1);
+            }
+          });
+        }
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -374,6 +403,8 @@ export default memo(function Terminal({
       if (channelRef.current) {
         channelRef.current.onmessage = () => {};
       }
+      try { currentWebgl?.dispose(); } catch { /* ok */ }
+      currentWebgl = null;
       xterm.dispose();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
