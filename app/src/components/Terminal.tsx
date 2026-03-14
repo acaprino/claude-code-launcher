@@ -382,11 +382,16 @@ export default memo(function Terminal({
     // /compact in Claude Code). After a compact, all previous line positions
     // are invalid — partial pruning would leave stale bookmarks pointing to
     // wrong content.
+    // Guard: skip during/after resize — terminal width changes cause line
+    // reflow (unwrapping) that shrinks buffer.active.length without any
+    // actual content being cleared.
     xterm.onWriteParsed(() => {
       const bufLen = xterm.buffer.active.length;
       const prevLen = prevBufferLenRef.current;
       prevBufferLenRef.current = bufLen;
       if (prevLen > 0 && bufLen < prevLen - xterm.rows) {
+        // Ignore buffer shrinkage within 500ms of a resize — reflow, not clear
+        if (Date.now() - lastResizeTimeRef.current < 500) return;
         const bm = bookmarksRef.current;
         if (bm.size === 0) return;
         bm.clear();
@@ -715,6 +720,7 @@ export default memo(function Terminal({
           cancelAnimationFrame(resizeRafRef.current);
           resizeRafRef.current = 0;
         }
+        lastResizeTimeRef.current = Date.now();
         fitAndResizeRef.current?.();
         // Force a full content refresh on every tab switch. This catches
         // cases where WebGL context was evicted while the tab was inactive
