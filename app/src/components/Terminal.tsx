@@ -218,6 +218,7 @@ export default memo(function Terminal({
   // Agent mode state machine: idle → awaiting_input → processing → awaiting_permission
   const agentInputStateRef = useRef<"idle" | "awaiting_input" | "processing" | "awaiting_permission">("idle");
   const agentInputBufRef = useRef("");
+  const spinnerTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const themeColorsRef = useRef(themeColors);
 
   useEffect(() => {
@@ -474,7 +475,7 @@ export default memo(function Terminal({
             if (text) {
               agentInputStateRef.current = "processing";
               xterm.write(ESC_CURSOR_HIDE);
-              xterm.write("\x1b[2m\u28FB Thinking...\x1b[0m");
+              startSpinner("Thinking...");
               onTaglineChangeRef.current?.(tabIdRef.current, "Thinking…");
               sendAgentMessage(tabIdRef.current, text).catch(() => {});
             }
@@ -561,6 +562,34 @@ export default memo(function Terminal({
       }
     });
 
+    // ── Animated spinner for agent processing state ─────────
+    const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let spinnerIdx = 0;
+    let spinnerActive = false;
+
+    const startSpinner = (label: string) => {
+      stopSpinner();
+      spinnerIdx = 0;
+      spinnerActive = true;
+      xterm.write(`\x1b[2m${SPINNER_FRAMES[0]} ${label}\x1b[0m`);
+      spinnerTimerRef.current = setInterval(() => {
+        spinnerIdx = (spinnerIdx + 1) % SPINNER_FRAMES.length;
+        xterm.write(`\r\x1b[2K\x1b[2m${SPINNER_FRAMES[spinnerIdx]} ${label}\x1b[0m`);
+      }, 80);
+    };
+
+    const stopSpinner = () => {
+      if (spinnerTimerRef.current) {
+        clearInterval(spinnerTimerRef.current);
+        spinnerTimerRef.current = null;
+      }
+      if (spinnerActive) {
+        spinnerActive = false;
+        // Clear the spinner line — \r goes to column 0, \x1b[2K erases the line
+        xterm.write("\r\x1b[2K");
+      }
+    };
+
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
     setXtermReady(xterm);
@@ -639,15 +668,23 @@ export default memo(function Terminal({
 
         const handleAgentEvent = (event: AgentEvent) => {
           if (cancelled) return;
+
+          // Stop spinner before rendering new content (except for thinking deltas)
+          if (event.type !== "thinking" && event.type !== "progress" && event.type !== "status") {
+            stopSpinner();
+          }
+
           const rendered = renderAgentEvent(event, themeColorsRef.current, xterm.cols);
           if (rendered) xterm.write(rendered);
 
           if (event.type === "inputRequired") {
+            stopSpinner();
             agentInputStateRef.current = "awaiting_input";
             agentInputBufRef.current = "";
             xterm.write(ESC_CURSOR_SHOW);
             onTaglineChangeRef.current?.(tabIdRef.current, "");
           } else if (event.type === "permission") {
+            stopSpinner();
             agentInputStateRef.current = "awaiting_permission";
             onTaglineChangeRef.current?.(tabIdRef.current, `Permission: ${event.tool}`);
           } else if (event.type === "toolUse") {
@@ -658,11 +695,18 @@ export default memo(function Terminal({
                 : "";
             onTaglineChangeRef.current?.(tabIdRef.current, detail ? `${event.tool}: ${detail}` : event.tool);
           } else if (event.type === "thinking") {
+            // Start/keep animated spinner for thinking — the static rendered text
+            // from ansiRenderer is overwritten by the spinner animation
+            if (!spinnerTimerRef.current) {
+              startSpinner("Thinking...");
+            }
             onTaglineChangeRef.current?.(tabIdRef.current, "Thinking…");
           } else if (event.type === "result") {
+            stopSpinner();
             onAgentResultRef.current?.(tabIdRef.current, event);
             onTaglineChangeRef.current?.(tabIdRef.current, "");
           } else if (event.type === "exit") {
+            stopSpinner();
             exitedRef.current = true;
             onExitRef.current(tabIdRef.current, event.code);
             onTaglineChangeRef.current?.(tabIdRef.current, "");
@@ -884,6 +928,10 @@ export default memo(function Terminal({
       clearTimeout(resizeTimer);
       clearTimeout(cursorShowTimer);
       clearInterval(heartbeatInterval);
+      if (spinnerTimerRef.current) {
+        clearInterval(spinnerTimerRef.current);
+        spinnerTimerRef.current = null;
+      }
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       containerRef.current?.removeEventListener("paste", handleNativePaste, true);
       unlistenDragDrop?.();

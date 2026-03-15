@@ -49,12 +49,12 @@ function box_(header: string, content: string, color: string, cols: number): str
 export function renderAgentEvent(event: AgentEvent, theme: ThemeColors, cols: number): string {
   switch (event.type) {
     case "assistant": {
-      // Clear any "Thinking..." line before first output
-      const clearLine = "\r\x1b[2K";
       if (event.streaming) {
-        return clearLine + event.text;
+        // Streaming delta — convert bare \n to \r\n for xterm line feeds
+        return event.text.replace(/\n/g, "\r\n");
       }
-      return clearLine + wordWrap(event.text, cols) + "\r\n";
+      // Complete message — wrap and add newline
+      return wordWrap(event.text, cols) + "\r\n";
     }
 
     case "toolUse": {
@@ -79,13 +79,12 @@ export function renderAgentEvent(event: AgentEvent, theme: ThemeColors, cols: nu
     }
 
     case "inputRequired": {
-      return `\r\n\x1b[?25h${fg(theme.accent)}❯${RESET} `;
+      return `\r\n${fg(theme.accent)}❯${RESET} `;
     }
 
     case "thinking": {
-      if (!event.text) return "";
-      // Just show a dim indicator, don't dump full thinking
-      return `${DIM}⠋ Thinking...${RESET}\r`;
+      // Spinner animation is handled by Terminal.tsx — don't render static text
+      return "";
     }
 
     case "status": {
@@ -98,11 +97,13 @@ export function renderAgentEvent(event: AgentEvent, theme: ThemeColors, cols: nu
     }
 
     case "result": {
-      const cost = `$${event.cost.toFixed(3)}`;
-      const tokens = fmtTokens(event.inputTokens + event.outputTokens);
-      const cached = event.cacheReadTokens > 0 ? ` (${fmtTokens(event.cacheReadTokens)} cached)` : "";
-      const turns = `${event.turns} turn${event.turns !== 1 ? "s" : ""}`;
-      const duration = `${(event.durationMs / 1000).toFixed(1)}s`;
+      const safe = (n: number) => (Number.isFinite(n) ? n : 0);
+      const cost = `$${safe(event.cost).toFixed(3)}`;
+      const totalTokens = safe(event.inputTokens) + safe(event.outputTokens);
+      const tokens = fmtTokens(totalTokens);
+      const cached = safe(event.cacheReadTokens) > 0 ? ` (${fmtTokens(safe(event.cacheReadTokens))} cached)` : "";
+      const turns = `${safe(event.turns)} turn${safe(event.turns) !== 1 ? "s" : ""}`;
+      const duration = `${(safe(event.durationMs) / 1000).toFixed(1)}s`;
       const line = `── ${cost} │ ${tokens} tokens${cached} │ ${turns} │ ${duration} ──`;
       return `\r\n${DIM}${line}${RESET}\r\n`;
     }

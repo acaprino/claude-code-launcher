@@ -169,6 +169,10 @@ async function handleCreate(cmd) {
 }
 
 async function consumeQuery(tabId, q) {
+  // Track whether we've streamed text for the current turn — if so, skip
+  // re-emitting the complete assistant message (which would duplicate it).
+  let hasStreamedText = false;
+
   try {
     for await (const msg of q) {
       const session = sessions.get(tabId);
@@ -176,11 +180,14 @@ async function consumeQuery(tabId, q) {
 
       switch (msg.type) {
         case "assistant": {
-          // BetaMessage has content blocks
+          // BetaMessage has content blocks — but if we already streamed them
+          // via stream_event deltas, skip text blocks to avoid duplication.
           const content = msg.message?.content || [];
           for (const block of content) {
             if (block.type === "text") {
-              emit({ evt: "assistant", tabId, text: block.text, streaming: false });
+              if (!hasStreamedText) {
+                emit({ evt: "assistant", tabId, text: block.text, streaming: false });
+              }
             } else if (block.type === "tool_use") {
               emit({
                 evt: "tool_use",
@@ -190,9 +197,13 @@ async function consumeQuery(tabId, q) {
                 toolUseId: block.id,
               });
             } else if (block.type === "thinking") {
-              emit({ evt: "thinking", tabId, text: block.thinking || "" });
+              if (!hasStreamedText) {
+                emit({ evt: "thinking", tabId, text: block.thinking || "" });
+              }
             }
           }
+          // Reset streaming flag after complete message
+          hasStreamedText = false;
           // Check for errors
           if (msg.error) {
             emit({ evt: "error", tabId, code: msg.error, message: `Assistant error: ${msg.error}` });
@@ -206,8 +217,10 @@ async function consumeQuery(tabId, q) {
           if (event?.type === "content_block_delta") {
             const delta = event.delta;
             if (delta?.type === "text_delta") {
+              hasStreamedText = true;
               emit({ evt: "assistant", tabId, text: delta.text, streaming: true });
             } else if (delta?.type === "thinking_delta") {
+              hasStreamedText = true;
               emit({ evt: "thinking", tabId, text: delta.thinking || "" });
             }
           }
@@ -220,16 +233,19 @@ async function consumeQuery(tabId, q) {
         }
 
         case "result": {
+          // Extract usage safely — SDK may nest under .usage or use top-level fields
+          const usage = msg.usage || {};
+          const safeNum = (v) => (typeof v === "number" && !Number.isNaN(v)) ? v : 0;
           emit({
             evt: "result",
             tabId,
-            cost: msg.total_cost_usd || 0,
-            inputTokens: msg.usage?.input_tokens || 0,
-            outputTokens: msg.usage?.output_tokens || 0,
-            cacheReadTokens: msg.usage?.cache_read_input_tokens || 0,
-            cacheWriteTokens: msg.usage?.cache_creation_input_tokens || 0,
-            turns: msg.num_turns || 0,
-            durationMs: msg.duration_ms || 0,
+            cost: safeNum(msg.total_cost_usd),
+            inputTokens: safeNum(usage.input_tokens),
+            outputTokens: safeNum(usage.output_tokens),
+            cacheReadTokens: safeNum(usage.cache_read_input_tokens),
+            cacheWriteTokens: safeNum(usage.cache_creation_input_tokens),
+            turns: safeNum(msg.num_turns),
+            durationMs: safeNum(msg.duration_ms),
             isError: msg.is_error || false,
             sessionId: msg.session_id || "",
           });
@@ -298,11 +314,9 @@ async function consumeQuery(tabId, q) {
 function handleSend(cmd) {
   const session = sessions.get(cmd.tabId);
   if (!session) {
-    log(`send: session not found for tab ${cmd.tabId}, active sessions: ${[...sessions.keys()].join(", ")}`);
     emit({ evt: "error", tabId: cmd.tabId, code: "not_found", message: "Session not found" });
     return;
   }
-  log(`send: pushing input to tab ${cmd.tabId}: "${cmd.text.slice(0, 50)}"`);
   session._pushInput(cmd.text);
 }
 
