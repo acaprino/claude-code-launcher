@@ -7,6 +7,7 @@ mod tools;
 mod commands;
 mod marketplace;
 mod projects;
+mod prompts;
 mod pty;
 mod session;
 mod usage_stats;
@@ -84,7 +85,7 @@ fn main() {
 
             // Auto-grant clipboard permission to suppress the WebView2 permission dialog.
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.with_webview(|webview| {
+                if let Err(e) = window.with_webview(|webview| {
                     use webview2_com::Microsoft::Web::WebView2::Win32::*;
                     use webview2_com::PermissionRequestedEventHandler;
                     let controller = webview.controller();
@@ -103,10 +104,14 @@ fn main() {
                                 }),
                             );
                             let mut token = 0i64;
-                            let _ = core.add_PermissionRequested(&handler, &mut token);
+                            if let Err(e) = core.add_PermissionRequested(&handler, &mut token) {
+                                log_warn!("Failed to register clipboard permission handler: {e}");
+                            }
                         }
                     }
-                });
+                }) {
+                    log_warn!("Failed to configure WebView2 permission handler: {e}");
+                }
             }
 
             log_info!("setup: complete");
@@ -131,6 +136,7 @@ fn main() {
             commands::save_clipboard_image,
             commands::get_token_usage,
             commands::list_directory,
+            commands::load_builtin_prompts,
         ])
         .on_window_event(move |window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

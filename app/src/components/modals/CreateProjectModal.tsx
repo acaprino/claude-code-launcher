@@ -4,18 +4,18 @@ import Modal from "../Modal";
 import FolderTree from "../FolderTree";
 
 interface CreateProjectModalProps {
-  projectDirs: string[];
+  defaultDir: string;
   onClose: () => void;
   onCreated: () => void;
 }
 
 export default function CreateProjectModal({
-  projectDirs,
+  defaultDir,
   onClose,
   onCreated,
 }: CreateProjectModalProps) {
   const [name, setName] = useState("");
-  const [parentDir, setParentDir] = useState(projectDirs[0] ?? "");
+  const [parentDir, setParentDir] = useState(defaultDir);
   const [gitInit, setGitInit] = useState(true);
   const [err, setErr] = useState("");
   const [creating, setCreating] = useState(false);

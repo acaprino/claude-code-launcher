@@ -288,7 +288,7 @@ function NewTabPage({ tabId, onLaunch, onRequestClose, onOpenSystemPrompts, isAc
 
       {activeModal === "create-project" && (
         <CreateProjectModal
-          projectDirs={settings.project_dirs}
+          defaultDir={settings.project_dirs[0] ?? ""}
           onClose={() => setActiveModal(null)}
           onCreated={refresh}
         />

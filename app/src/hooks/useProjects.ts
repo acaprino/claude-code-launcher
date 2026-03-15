@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ProjectInfo, Settings, UsageData, SORT_ORDERS } from "../types";
 import { applyTheme } from "../themes";
-import { BUILTIN_PROMPTS } from "../prompts";
 
 function scanProjects(s: Settings): Promise<ProjectInfo[]> {
   return invoke<ProjectInfo[]>("scan_projects", {
@@ -33,7 +32,8 @@ export function useProjects() {
       ]);
       // Seed example prompts on first run (empty list, never seeded)
       if (s.system_prompts.length === 0 && !s.prompts_seeded) {
-        s.system_prompts = BUILTIN_PROMPTS.map((bp) => ({
+        const builtins = await invoke<{ id: string; name: string; description: string; content: string }[]>("load_builtin_prompts");
+        s.system_prompts = builtins.map((bp) => ({
           id: bp.id,
           name: bp.name,
           description: bp.description,
