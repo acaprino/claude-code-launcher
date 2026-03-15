@@ -59,10 +59,21 @@ const ANSI_LOGO = ANSI_LOGO_PARTS.join("\r\n") + LOGO_COLORS.R;
 const CLAUDE_BANNER_LINES = 3;
 const CUP_ROW_OFFSET = ANSI_LOGO_PARTS.length - CLAUDE_BANNER_LINES;
 
+/** Strip characters outside the Basic Multilingual Plane (emoji, supplementary chars)
+ *  that become surrogate pairs in UTF-16.  On Windows, passing these through command-line
+ *  arguments or ConPTY can corrupt them into lone surrogates, causing "invalid high
+ *  surrogate" JSON errors from the Claude API.  Also strips lone surrogates directly. */
+function stripNonBmpAndSurrogates(text: string): string {
+  // IMPORTANT: the 'u' flag is required — without it \u{10000}-\u{10FFFF} won't match
+  // supplementary plane codepoints and surrogate pairs won't be handled atomically.
+  // eslint-disable-next-line no-misleading-character-class
+  return text.replace(/[\uD800-\uDFFF]|[\u{10000}-\u{10FFFF}]/gu, "");
+}
+
 /** Replace common non-ASCII characters with ASCII equivalents and strip control chars.
  *  This prevents encoding issues when pasting text from editors, web pages, or Word docs. */
 function sanitizePastedText(text: string): string {
-  return text
+  const cleaned = text
     // Curly/smart quotes → straight quotes
     .replace(/[\u2018\u2019\u201A\u2039\u203A]/g, "'")
     .replace(/[\u201C\u201D\u201E\u00AB\u00BB]/g, '"')
@@ -110,9 +121,8 @@ function sanitizePastedText(text: string): string {
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")  // OSC sequences
     // Strip control characters (keep \t, \n, \r)
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "")
-    // Strip lone surrogates — defense against non-standard clipboard sources (e.g. Tauri plugin IPC)
-    .replace(/[\uD800-\uDFFF]/g, "");
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+  return stripNonBmpAndSurrogates(cleaned);
 }
 
 interface TerminalProps {
@@ -536,7 +546,7 @@ export default memo(function Terminal({
         effortIdx,
         skipPerms,
         autocompact,
-        systemPrompt,
+        stripNonBmpAndSurrogates(systemPrompt),
         cols,
         rows,
         (data: string) => {

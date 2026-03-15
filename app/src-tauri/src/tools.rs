@@ -14,10 +14,10 @@ fn is_shim(exe_str: &str) -> bool {
     exe_str.ends_with(".cmd") || exe_str.ends_with(".bat")
 }
 
-fn wrap_shim(exe_str: &str, args: Vec<String>) -> (String, Vec<String>) {
-    let mut shim_args = vec!["/c".to_string(), format!("\"{}\"", exe_str)];
+fn wrap_shim(exe_str: &str, args: Vec<String>) -> (String, Vec<String>, bool) {
+    let mut shim_args = vec!["/c".to_string(), exe_str.to_string()];
     shim_args.extend(args);
-    ("cmd.exe".to_string(), shim_args)
+    ("cmd.exe".to_string(), shim_args, true)
 }
 
 pub fn resolve_claude_exe() -> Result<PathBuf, String> {
@@ -46,7 +46,7 @@ pub fn build_claude_command(
     skip_perms: bool,
     autocompact: bool,
     append_system_prompt: &str,
-) -> (String, Vec<String>) {
+) -> (String, Vec<String>, bool) {
     let model_id = MODELS
         .get(model_idx)
         .map(|(_, id)| *id)
@@ -79,10 +79,9 @@ pub fn build_claude_command(
 
     let result = if is_shim(&exe_str) {
         log_info!("tools: claude exe is a shim ({exe_str}), wrapping with cmd.exe");
-        // Quote the exe path for cmd.exe /c to handle spaces
         wrap_shim(&exe_str, claude_args)
     } else {
-        (exe_str, claude_args)
+        (exe_str, claude_args, false)
     };
     log_info!("tools: claude command built — model={model_id}, effort={effort}, skip_perms={skip_perms}, autocompact={autocompact}, has_prompt={}", !append_system_prompt.is_empty());
     result
@@ -116,14 +115,14 @@ pub fn resolve_gemini_exe() -> Result<PathBuf, String> {
     Err("Gemini executable not found. Install with: npm install -g @google/gemini-cli".to_string())
 }
 
-pub fn build_gemini_command(gemini_exe: &Path) -> (String, Vec<String>) {
+pub fn build_gemini_command(gemini_exe: &Path) -> (String, Vec<String>, bool) {
     let exe_str = gemini_exe.to_string_lossy().to_string();
 
     let result = if is_shim(&exe_str) {
         log_info!("tools: gemini exe is a shim ({exe_str}), wrapping with cmd.exe");
         wrap_shim(&exe_str, vec![])
     } else {
-        (exe_str, vec![])
+        (exe_str, vec![], false)
     };
     log_info!("tools: gemini command built");
     result

@@ -45,6 +45,29 @@ fn quote_arg(arg: &str) -> String {
     result
 }
 
+/// Quote a single argument for a command routed through `cmd.exe /c`.
+///
+/// cmd.exe does NOT understand `\"` as an escaped quote — it sees `"` as
+/// toggling quoted mode, which exposes metacharacters like `&`, `|`, `<`, `>`
+/// to interpretation as command separators.
+///
+/// This function uses `""` (double double-quote) to escape embedded quotes,
+/// which both cmd.exe AND CommandLineToArgvW accept as a literal `"`.
+/// It also escapes `%` as `%%` to prevent environment variable expansion.
+fn quote_arg_cmd(arg: &str) -> String {
+    let mut result = String::with_capacity(arg.len() + 4);
+    result.push('"');
+    for c in arg.chars() {
+        match c {
+            '"' => result.push_str("\"\""),
+            '%' => result.push_str("%%"),
+            _ => result.push(c),
+        }
+    }
+    result.push('"');
+    result
+}
+
 #[tauri::command]
 pub async fn spawn_tool(
     registry: State<'_, Arc<SessionRegistry>>,
@@ -80,22 +103,22 @@ pub async fn spawn_tool(
         return Err(format!("System prompt too large (max {MAX_SYSTEM_PROMPT_LEN} bytes)"));
     }
 
-    let (program, args, env) = match tool_idx {
+    let (program, args, env, is_cmd) = match tool_idx {
         0 => {
             let claude_exe = tools::resolve_claude_exe().map_err(|e| {
                 log_error!("spawn_tool: failed to resolve claude exe: {e}");
                 e
             })?;
-            let (p, a) = tools::build_claude_command(&claude_exe, model_idx, effort_idx, skip_perms, autocompact, &system_prompt);
-            (p, a, tools::claude_env())
+            let (p, a, cmd) = tools::build_claude_command(&claude_exe, model_idx, effort_idx, skip_perms, autocompact, &system_prompt);
+            (p, a, tools::claude_env(), cmd)
         }
         1 => {
             let gemini_exe = tools::resolve_gemini_exe().map_err(|e| {
                 log_error!("spawn_tool: failed to resolve gemini exe: {e}");
                 e
             })?;
-            let (p, a) = tools::build_gemini_command(&gemini_exe);
-            (p, a, tools::gemini_env())
+            let (p, a, cmd) = tools::build_gemini_command(&gemini_exe);
+            (p, a, tools::gemini_env(), cmd)
         }
         _ => {
             log_error!("spawn_tool: invalid tool_idx={tool_idx}");
@@ -103,12 +126,15 @@ pub async fn spawn_tool(
         }
     };
 
+    // Use cmd.exe-safe quoting when routed through a .cmd/.bat shim to prevent
+    // metacharacter injection (&, |, <, >, %, etc.).
+    let quoter: fn(&str) -> String = if is_cmd { quote_arg_cmd } else { quote_arg };
     let mut cmd_parts = vec![program];
     cmd_parts.extend(args);
     let command_line = cmd_parts
         .iter()
         .enumerate()
-        .map(|(i, p)| if i == 0 { p.clone() } else { quote_arg(p) })
+        .map(|(i, p)| if i == 0 { p.clone() } else { quoter(p) })
         .collect::<Vec<_>>()
         .join(" ");
     // Log the command used to launch the session.  Redact the --append-system-prompt
@@ -123,12 +149,20 @@ pub async fn spawn_tool(
             let trimmed = rest.trim_start();
             let skip_ws = rest.len() - trimmed.len();
             let value_end = if trimmed.starts_with('"') {
-                // Find closing quote (respecting escaped quotes from quote_arg)
+                // Find closing quote (respecting escaped quotes from both
+                // quote_arg `\"` and quote_arg_cmd `""`)
                 let mut i = 1;
                 let bytes = trimmed.as_bytes();
                 while i < bytes.len() {
-                    if bytes[i] == b'\\' { i += 2; continue; }
-                    if bytes[i] == b'"' { i += 1; break; }
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                        i += 2; continue; // skip \" (quote_arg style)
+                    }
+                    if bytes[i] == b'"' {
+                        if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                            i += 2; continue; // skip "" (quote_arg_cmd style)
+                        }
+                        i += 1; break; // closing quote
+                    }
                     i += 1;
                 }
                 after_flag + skip_ws + i
