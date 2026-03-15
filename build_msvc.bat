@@ -6,23 +6,18 @@ echo   Anvil - Tauri App Build (MSVC link.exe)
 echo ============================================
 echo.
 
-set "RUST_BIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin"
-set "CARGO_BIN=%USERPROFILE%\.cargo\bin"
+set "RUST_BIN=C:\Users\%USERNAME%\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin"
+set "CARGO_BIN=C:\Users\%USERNAME%\.cargo\bin"
 set "PATH=%RUST_BIN%;%CARGO_BIN%;%PATH%"
 
-:: Find latest VS installation with C++ tools using vswhere
-for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_INSTALL=%%i"
-if not defined VS_INSTALL (
-    echo ERROR: Visual Studio with C++ tools not found.
-    echo Install "Desktop development with C++" from https://visualstudio.microsoft.com/visual-cpp-build-tools/
-    exit /b 1
-)
-set "VCVARSALL=%VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat"
+:: Setup MSVC environment (provides cl.exe and link.exe)
+set "VCVARSALL=C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
 if exist "%VCVARSALL%" (
     echo Setting up MSVC build environment...
     call "%VCVARSALL%" x64
 ) else (
-    echo ERROR: vcvarsall.bat not found at %VCVARSALL%
+    echo ERROR: Visual Studio Build Tools not found.
+    echo Install "Desktop development with C++" from https://visualstudio.microsoft.com/visual-cpp-build-tools/
     exit /b 1
 )
 
