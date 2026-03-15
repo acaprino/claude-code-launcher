@@ -82,7 +82,7 @@ async function handleCreate(cmd) {
     options.canUseTool = async (toolName, input, opts) => {
       const description = toolName === "Bash"
         ? (input.command || "").slice(0, 200)
-        : toolName === "Edit" || toolName === "Write"
+        : toolName === "Edit" || toolName === "Write" || toolName === "Read"
           ? (input.file_path || "")
           : JSON.stringify(input).slice(0, 200);
 
@@ -96,7 +96,7 @@ async function handleCreate(cmd) {
       });
 
       // Wait for permission response from frontend
-      return new Promise((resolve) => {
+      const result = await new Promise((resolve) => {
         const session = sessions.get(tabId);
         if (session) {
           session.pendingPermission = { resolve, toolUseId: opts.toolUseID };
@@ -104,6 +104,7 @@ async function handleCreate(cmd) {
           resolve({ behavior: "deny", message: "Session not found" });
         }
       });
+      return result;
     };
   }
 
