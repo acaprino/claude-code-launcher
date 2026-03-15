@@ -49,12 +49,12 @@ function box_(header: string, content: string, color: string, cols: number): str
 export function renderAgentEvent(event: AgentEvent, theme: ThemeColors, cols: number): string {
   switch (event.type) {
     case "assistant": {
+      // Clear any "Thinking..." line before first output
+      const clearLine = "\r\x1b[2K";
       if (event.streaming) {
-        // Streaming delta — just append text, no newline
-        return event.text;
+        return clearLine + event.text;
       }
-      // Complete message — wrap and add newline
-      return wordWrap(event.text, cols) + "\r\n";
+      return clearLine + wordWrap(event.text, cols) + "\r\n";
     }
 
     case "toolUse": {

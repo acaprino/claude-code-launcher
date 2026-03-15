@@ -446,7 +446,11 @@ export default memo(function Terminal({
             xterm.write("\r\n");
             if (text) {
               agentInputStateRef.current = "processing";
-              sendAgentMessage(tabIdRef.current, text).catch(() => {});
+              xterm.write("\x1b[2m\u28FB Thinking...\x1b[0m");
+              sendAgentMessage(tabIdRef.current, text).catch((err) => {
+                xterm.write(`\r\n\x1b[91mSend failed: ${String(err)}\x1b[0m\r\n`);
+                agentInputStateRef.current = "awaiting_input";
+              });
             }
           } else if (data === "\x7f" || data === "\b") {
             // Backspace

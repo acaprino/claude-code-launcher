@@ -298,9 +298,11 @@ async function consumeQuery(tabId, q) {
 function handleSend(cmd) {
   const session = sessions.get(cmd.tabId);
   if (!session) {
+    log(`send: session not found for tab ${cmd.tabId}, active sessions: ${[...sessions.keys()].join(", ")}`);
     emit({ evt: "error", tabId: cmd.tabId, code: "not_found", message: "Session not found" });
     return;
   }
+  log(`send: pushing input to tab ${cmd.tabId}: "${cmd.text.slice(0, 50)}"`);
   session._pushInput(cmd.text);
 }
 
