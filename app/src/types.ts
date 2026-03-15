@@ -20,6 +20,10 @@ export interface Tab {
   hasNewOutput?: boolean;
   exitCode?: number | null;
   tagline?: string;
+  /** When set, Terminal will call resumeAgent() instead of spawnAgent(). Consumed on mount. */
+  resumeSessionId?: string;
+  /** When set, Terminal will call forkAgent() instead of spawnAgent(). Consumed on mount. */
+  forkSessionId?: string;
 }
 
 export interface ProjectInfo {
@@ -50,6 +54,7 @@ export interface Settings {
   vertical_tabs?: boolean;
   sidebar_width?: number;
   autocomplete_enabled?: boolean;
+  session_panel_open?: boolean;
 }
 
 export interface UsageEntry {

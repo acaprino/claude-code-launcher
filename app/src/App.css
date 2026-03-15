@@ -41,6 +41,7 @@
   --sidebar-min-width: 140px;
   --sidebar-max-width: 360px;
   --sidebar-handle-width: 4px;
+  --session-panel-width: 260px;
 }
 
 *, *::before, *::after {
@@ -74,7 +75,8 @@ html, body, #root {
 .segmented,
 .segmented__item,
 .settings-content,
-.font-preview {
+.font-preview,
+.session-panel {
   transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
 }
 
@@ -102,6 +104,10 @@ button, input, select {
   display: grid;
   grid-template-rows: var(--title-bar-height) 1fr;
   grid-template-columns: var(--sidebar-width) 1fr;
+}
+
+.app.vertical-tabs.session-panel-open {
+  grid-template-columns: var(--sidebar-width) var(--session-panel-width) 1fr;
 }
 
 .app.vertical-tabs .tab-bar {

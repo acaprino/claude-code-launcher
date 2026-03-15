@@ -115,8 +115,6 @@ pub struct SidecarManager {
     _process: Mutex<Option<Child>>,
     /// Win32 Job Object — kills all child processes when closed.
     _job: Mutex<Option<JobHandle>>,
-    /// Human-readable reason if unavailable (for frontend warning)
-    unavailable_reason: Mutex<Option<String>>,
 }
 
 /// RAII wrapper for a Win32 Job Object handle.
@@ -138,7 +136,6 @@ impl SidecarManager {
             available: AtomicBool::new(false),
             _process: Mutex::new(None),
             _job: Mutex::new(None),
-            unavailable_reason: Mutex::new(None),
         };
 
         // Try to find node.exe and start the sidecar
@@ -149,7 +146,6 @@ impl SidecarManager {
                 // Ensure sidecar dependencies are installed
                 if let Err(e) = manager.ensure_deps(&node_path) {
                     log_error!("sidecar: failed to install dependencies: {e}");
-                    *manager.unavailable_reason.lock().unwrap() = Some(format!("Failed to install SDK dependencies: {e}"));
                     return manager;
                 }
 
@@ -160,13 +156,11 @@ impl SidecarManager {
                     }
                     Err(e) => {
                         log_error!("sidecar: failed to start: {e}");
-                        *manager.unavailable_reason.lock().unwrap() = Some(format!("Failed to start sidecar: {e}"));
                     }
                 }
             }
             None => {
                 log_warn!("sidecar: node.exe not found — agent SDK unavailable");
-                *manager.unavailable_reason.lock().unwrap() = Some("Node.js not found. Install Node.js (https://nodejs.org) to enable Agent SDK features.".to_string());
             }
         }
 
@@ -391,11 +385,6 @@ impl SidecarManager {
 
     pub fn available(&self) -> bool {
         self.available.load(Ordering::SeqCst)
-    }
-
-    /// Get the reason the sidecar is unavailable, if any.
-    pub fn unavailable_reason(&self) -> Option<String> {
-        self.unavailable_reason.lock().unwrap().clone()
     }
 
     /// Send a JSON command to the sidecar.

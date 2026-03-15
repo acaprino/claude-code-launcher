@@ -5,7 +5,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { spawnAgent, sendAgentMessage, killAgent, respondPermission, saveClipboardImage } from "../hooks/useAgentSession";
+import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, respondPermission, saveClipboardImage } from "../hooks/useAgentSession";
 import { useAutocomplete } from "../hooks/useAutocomplete";
 import { renderAgentEvent, fg } from "../ansiRenderer";
 import { getXtermTheme } from "../themes";
@@ -19,6 +19,7 @@ import "./Terminal.css";
 const ESC_CURSOR_HIDE = "\x1b[?25l";
 const ESC_CURSOR_SHOW = "\x1b[?25h";
 const MAX_BOOKMARK_TEXT = 200;
+const cursorUp = (n: number) => `\x1b[${n}A`;
 
 /** How long (ms) after a resize to ignore buffer shrinkage — reflow (line
  *  unwrapping) reduces buffer.active.length without content being cleared. */
@@ -159,6 +160,8 @@ interface TerminalProps {
   onAgentResult?: (tabId: string, event: AgentEvent) => void;
   onTaglineChange?: (tabId: string, tagline: string) => void;
   autocompleteEnabled?: boolean;
+  resumeSessionId?: string;
+  forkSessionId?: string;
 }
 
 export default memo(function Terminal({
@@ -181,6 +184,8 @@ export default memo(function Terminal({
   onAgentResult,
   onTaglineChange,
   autocompleteEnabled,
+  resumeSessionId,
+  forkSessionId,
 }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
@@ -209,7 +214,6 @@ export default memo(function Terminal({
   const responseBookmarkedRef = useRef(false);
   // Permission selector state
   const permissionSelIdxRef = useRef(0);
-  const permissionRowRef = useRef(0); // row where selector options start
   const permissionOptionsRef = useRef<{ label: string; allow: boolean; suggestions?: PermissionSuggestion[] }[]>([]);
   const themeColorsRef = useRef(themeColors);
 
@@ -223,25 +227,33 @@ export default memo(function Terminal({
   const autocompleteRef = useRef(autocomplete);
   autocompleteRef.current = autocomplete;
 
-  /** Render the interactive permission selector at the saved row. */
-  const renderPermissionSelector = (xterm: XTerm, selectedIdx: number) => {
-    const row = permissionRowRef.current;
+  /**
+   * Render the interactive permission selector using relative cursor movement.
+   * On first render (initial=true), writes options inline at the current cursor.
+   * On re-render (initial=false), moves cursor up to overwrite existing lines.
+   * After rendering, cursor is always at the end of the hint line.
+   */
+  const renderPermissionSelector = (xterm: XTerm, selectedIdx: number, initial = false) => {
     const options = permissionOptionsRef.current;
-    if (row <= 0 || options.length === 0) return;
+    if (options.length === 0) return;
     const accent = themeColorsRef.current.accent;
     const dim = "\x1b[2m";
     const bold = "\x1b[1m";
     const reset = "\x1b[0m";
     const fgAccent = fg(accent);
+    // On re-render, move cursor back up to the first option line.
+    if (!initial) {
+      xterm.write(cursorUp(options.length));
+    }
     for (let i = 0; i < options.length; i++) {
       const isSelected = i === selectedIdx;
       const line = isSelected
         ? `  ${fgAccent}${bold}❯ ${options[i].label}${reset}`
         : `  ${dim}  ${options[i].label}${reset}`;
-      xterm.write(`\x1b[${row + i};1H\x1b[K${line}`);
+      xterm.write(`\r\x1b[K${line}\r\n`);
     }
-    // Hint line after options
-    xterm.write(`\x1b[${row + options.length};1H\x1b[K${dim}Enter to confirm · ↑/↓ to navigate · Esc to deny${reset}`);
+    // Hint line — cursor stays here (no trailing \r\n)
+    xterm.write(`\r\x1b[K${dim}Enter to confirm · ↑/↓ to navigate · Esc to deny${reset}`);
     xterm.write(ESC_CURSOR_HIDE);
   };
 
@@ -430,6 +442,26 @@ export default memo(function Terminal({
       }
     };
 
+    // ── Permission commit — shared by key handler and onData ──────
+    const commitPermission = (label: string, allow: boolean, suggestions?: PermissionSuggestion[]) => {
+      const options = permissionOptionsRef.current;
+      const count = options.length;
+      if (count === 0) return;
+      // Cursor is at end of hint line. Move up to first option line.
+      xterm.write(cursorUp(count));
+      // Write chosen label, then erase everything below (options + hint)
+      xterm.write(`\r\x1b[K  ${label}\r\n`);
+      xterm.write("\x1b[J");
+      respondPermission(tabIdRef.current, allow, suggestions).catch((err) => {
+        const msg = String(err).replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+        xterm.write(`\r\n\x1b[31mPermission response failed: ${msg}\x1b[0m\r\n`);
+      });
+      agentInputStateRef.current = "processing";
+      xterm.write(ESC_CURSOR_HIDE);
+      permissionOptionsRef.current = [];
+      permissionSelIdxRef.current = 0;
+    };
+
     xterm.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== "keydown") return true;
       if (event.ctrlKey && !event.shiftKey && event.key === "t") return false;
@@ -456,6 +488,36 @@ export default memo(function Terminal({
         event.preventDefault();
         doPaste();
         return false;
+      }
+      // Permission selector — handle at KeyboardEvent level for reliability
+      if (agentInputStateRef.current === "awaiting_permission") {
+        const options = permissionOptionsRef.current;
+        const count = options.length;
+        if (count === 0) return false;
+        if (event.key === "ArrowUp") {
+          permissionSelIdxRef.current = (permissionSelIdxRef.current - 1 + count) % count;
+          renderPermissionSelector(xterm, permissionSelIdxRef.current);
+          return false;
+        }
+        if (event.key === "ArrowDown") {
+          permissionSelIdxRef.current = (permissionSelIdxRef.current + 1) % count;
+          renderPermissionSelector(xterm, permissionSelIdxRef.current);
+          return false;
+        }
+        if (event.key === "Enter") {
+          const opt = options[permissionSelIdxRef.current];
+          commitPermission(opt.label, opt.allow, opt.suggestions);
+          return false;
+        }
+        if (event.key === "Escape" || event.key === "n" || event.key === "N") {
+          commitPermission("No", false);
+          return false;
+        }
+        if (event.key === "y" || event.key === "Y") {
+          commitPermission("Yes", true);
+          return false;
+        }
+        return false; // block other keys during permission
       }
       // Autocomplete: Tab cycles, Right Arrow accepts, Esc dismisses
       if (agentInputStateRef.current === "awaiting_input") {
@@ -509,45 +571,8 @@ export default memo(function Terminal({
 
       const state = agentInputStateRef.current;
 
-      if (state === "awaiting_permission") {
-        const options = permissionOptionsRef.current;
-        const count = options.length;
-        if (count === 0) return; // guard against empty options
-
-        /** Clear selector UI, show chosen label, send response to sidecar. */
-        const commitPermission = (label: string, allow: boolean, suggestions?: PermissionSuggestion[]) => {
-          const row = permissionRowRef.current;
-          for (let i = 0; i <= count; i++) xterm.write(`\x1b[${row + i};1H\x1b[K`);
-          xterm.write(`\x1b[${row};1H  ${label}\r\n`);
-          respondPermission(tabIdRef.current, allow, suggestions).catch((err) => {
-            xterm.write(`\r\n\x1b[31mPermission response failed: ${err}\x1b[0m\r\n`);
-          });
-          agentInputStateRef.current = "processing";
-          xterm.write(ESC_CURSOR_HIDE);
-          // Reset stale permission state
-          permissionOptionsRef.current = [];
-          permissionRowRef.current = 0;
-          permissionSelIdxRef.current = 0;
-        };
-
-        if (data === "\x1b[A") {
-          // Arrow up
-          permissionSelIdxRef.current = (permissionSelIdxRef.current - 1 + count) % count;
-          renderPermissionSelector(xterm, permissionSelIdxRef.current);
-        } else if (data === "\x1b[B") {
-          // Arrow down
-          permissionSelIdxRef.current = (permissionSelIdxRef.current + 1) % count;
-          renderPermissionSelector(xterm, permissionSelIdxRef.current);
-        } else if (data === "\r") {
-          const opt = options[permissionSelIdxRef.current];
-          commitPermission(opt.label, opt.allow, opt.suggestions);
-        } else if (data === "\x1b" || data === "N" || data === "n") {
-          commitPermission("No", false);
-        } else if (data === "Y" || data === "y") {
-          commitPermission("Yes", true);
-        }
-        return;
-      }
+      // Permission keys handled in attachCustomKeyEventHandler above
+      if (state === "awaiting_permission") return;
 
       if (state === "awaiting_input") {
         if (data === "\r") {
@@ -750,12 +775,7 @@ export default memo(function Terminal({
           options.push({ label: "No", allow: false });
           permissionOptionsRef.current = options;
           permissionSelIdxRef.current = 0;
-          // Save the viewport-relative row (ANSI cursor addressing is 1-based, viewport-relative)
-          const optRow = xterm.buffer.active.cursorY + 2;
-          permissionRowRef.current = optRow;
-          // Write blank lines to make room for options + hint
-          for (let i = 0; i < options.length + 1; i++) xterm.write("\r\n");
-          renderPermissionSelector(xterm, 0);
+          renderPermissionSelector(xterm, 0, true);
           onTaglineChangeRef.current?.(tabIdRef.current, `Permission: ${event.tool}`);
         } else if (event.type === "toolUse") {
           const inp = event.input as Record<string, string> | undefined;
@@ -787,15 +807,19 @@ export default memo(function Terminal({
         }
       };
 
-      spawnAgent(
-        tabId,
-        projectPath,
-        modelId,
-        effortId,
-        stripNonBmpAndSurrogates(systemPrompt),
-        skipPerms,
-        handleAgentEvent,
-      )
+      if (resumeSessionId) {
+        xterm.write(`\r\n  ${fg(themeColors.accent)}Resuming session...\x1b[0m\r\n`);
+      } else if (forkSessionId) {
+        xterm.write(`\r\n  ${fg(themeColors.accent)}Forking session...\x1b[0m\r\n`);
+      }
+
+      const launchPromise = resumeSessionId
+        ? resumeAgent(tabId, resumeSessionId, projectPath, modelId, effortId, handleAgentEvent)
+        : forkSessionId
+          ? forkAgent(tabId, forkSessionId, projectPath, modelId, effortId, handleAgentEvent)
+          : spawnAgent(tabId, projectPath, modelId, effortId, stripNonBmpAndSurrogates(systemPrompt), skipPerms, handleAgentEvent);
+
+      launchPromise
         .then(() => {
           if (cancelled) {
             killAgent(tabId).catch(() => {});

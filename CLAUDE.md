@@ -19,7 +19,7 @@ A Windows-only Tauri 2 desktop app for selecting and launching Claude Code Agent
 
 ## Key Paths
 
-- `app/src/components/` - TabBar, TabSidebar, TitleBar, Terminal, Minimap, BookmarkList, ProjectList, InfoStrip, SessionConfig, NewTabPage, AboutPage, UsagePage, SystemPromptPage, SessionBrowser, Modal, ErrorBoundary, AsciiLogo, FolderTree, SegmentedControl
+- `app/src/components/` - TabBar, TabSidebar, TitleBar, Terminal, Minimap, BookmarkList, ProjectList, InfoStrip, SessionConfig, NewTabPage, AboutPage, UsagePage, SystemPromptPage, SessionBrowser, SessionPanel, Modal, ErrorBoundary, AsciiLogo, FolderTree, SegmentedControl
 - `app/src/hooks/` - useTabManager, useProjects, useAgentSession, useAutocomplete
 - `app/src/ansiRenderer.ts` - Converts AgentEvent objects to styled ANSI text for xterm display
 - `app/src/contexts/ProjectsContext.tsx` - Shared project state
@@ -48,6 +48,7 @@ sonnet / opus / haiku / sonnet [1M] / opus [1M]
 - **Ctrl+U**: Toggle usage/stats tab
 - **Ctrl+Shift+P**: Toggle system prompts tab
 - **Ctrl+Shift+H**: Toggle sessions browser tab
+- **Ctrl+Shift+S**: Toggle session panel
 
 ### Project Picker (NewTabPage active, no modal open)
 - **Tab**: Cycle model

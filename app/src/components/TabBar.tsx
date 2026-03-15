@@ -20,9 +20,10 @@ interface TabBarProps {
   onSaveToProjects?: (tabId: string) => void;
   onToggleAbout: () => void;
   onToggleUsage: () => void;
+  onToggleSessions: () => void;
 }
 
-export default memo(function TabBar({ tabs, activeTabId, onActivate, onClose, onAdd, onSaveToProjects, onToggleAbout, onToggleUsage }: TabBarProps) {
+export default memo(function TabBar({ tabs, activeTabId, onActivate, onClose, onAdd, onSaveToProjects, onToggleAbout, onToggleUsage, onToggleSessions }: TabBarProps) {
   const [closingIds, setClosingIds] = useState<Set<string>>(new Set());
   const closingTimersRef = useRef<Map<string, number>>(new Map());
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
@@ -131,6 +132,13 @@ export default memo(function TabBar({ tabs, activeTabId, onActivate, onClose, on
         +
       </button>
       <div className="tab-bar-actions">
+        <button className="tab-bar-action" onClick={onToggleSessions} title="Sessions (Ctrl+Shift+S)" aria-label="Sessions">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M6 1a5 5 0 1 0 5 5H6V1z" stroke="currentColor" strokeWidth="1.2" fill="none"/>
+            <line x1="6" y1="6" x2="6" y2="2.5" stroke="currentColor" strokeWidth="1.2"/>
+            <line x1="6" y1="6" x2="9" y2="6" stroke="currentColor" strokeWidth="1.2"/>
+          </svg>
+        </button>
         <button className="tab-bar-action" onClick={onToggleUsage} title="Usage Stats (Ctrl+U)" aria-label="Usage Stats">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <rect x="1" y="7" width="2" height="4" rx="0.5" fill="currentColor"/>

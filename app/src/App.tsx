@@ -13,6 +13,7 @@ import AboutPage from "./components/AboutPage";
 import UsagePage from "./components/UsagePage";
 import SystemPromptPage from "./components/SystemPromptPage";
 import SessionBrowser from "./components/SessionBrowser";
+import SessionPanel from "./components/SessionPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./App.css";
 
@@ -101,6 +102,11 @@ function AppContent() {
     root.style.setProperty("--text-base", `${fontSize}px`);
   }, [fontFamily, fontSize]);
 
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -128,12 +134,15 @@ function AppContent() {
       } else if (e.ctrlKey && e.shiftKey && e.key === "P") {
         e.preventDefault();
         toggleSystemPromptTab();
+      } else if (e.ctrlKey && e.shiftKey && e.key === "S") {
+        e.preventDefault();
+        updateSettings({ session_panel_open: !settingsRef.current?.session_panel_open });
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [addTabAndResetFilter, toggleAboutTab, toggleUsageTab, toggleSystemPromptTab, toggleSessionsTab, closeTab, activeTabId, nextTab, prevTab]);
+  }, [addTabAndResetFilter, toggleAboutTab, toggleUsageTab, toggleSystemPromptTab, toggleSessionsTab, updateSettings, closeTab, activeTabId, nextTab, prevTab]);
 
   const handleLaunch = useCallback(
     (tabId: string, projectPath: string, projectName: string, modelIdx: number, effortIdx: number, skipPerms: boolean, autocompact: boolean, temporary?: boolean) => {
@@ -172,11 +181,6 @@ function AppContent() {
     updateTab(tabId, { tagline });
   }, [updateTab]);
 
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
-
   const handleSaveToProjects = useCallback((tabId: string) => {
     const tab = tabsRef.current.find((t) => t.id === tabId);
     if (!tab?.projectPath || !tab.temporary) return;
@@ -195,6 +199,43 @@ function AppContent() {
     updateTab(tabId, { temporary: false });
   }, [updateSettings, updateTab]);
 
+  // Session panel
+  const sessionPanelOpen = settings?.session_panel_open ?? false;
+  const activeProjectPath = activeTab.type === "agent" ? (activeTab.projectPath ?? null) : null;
+
+  const toggleSessionPanel = useCallback(() => {
+    updateSettings({ session_panel_open: !settingsRef.current?.session_panel_open });
+  }, [updateSettings]);
+
+  const handleSessionAction = useCallback((
+    mode: "resume" | "fork", sessionId: string, cwd: string, inNewTab?: boolean,
+  ) => {
+    const projectName = cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "Terminal";
+    const modelIdx = settingsRef.current?.model_idx ?? 0;
+    const effortIdx = settingsRef.current?.effort_idx ?? 0;
+    const autocompact = settingsRef.current?.autocompact ?? false;
+    const field = mode === "resume" ? "resumeSessionId" : "forkSessionId";
+    const payload = {
+      type: "agent" as const, projectPath: cwd, projectName, modelIdx, effortIdx,
+      skipPerms: false, autocompact, [field]: sessionId,
+    };
+
+    if (inNewTab || activeTab.type !== "agent") {
+      const tabId = addTab();
+      updateTab(tabId, payload);
+    } else {
+      updateTab(activeTabId, payload);
+    }
+  }, [activeTab.type, activeTabId, addTab, updateTab]);
+
+  const handleResumeSession = useCallback((sessionId: string, cwd: string, inNewTab?: boolean) => {
+    handleSessionAction("resume", sessionId, cwd, inNewTab);
+  }, [handleSessionAction]);
+
+  const handleForkSession = useCallback((sessionId: string, cwd: string, inNewTab?: boolean) => {
+    handleSessionAction("fork", sessionId, cwd, inNewTab);
+  }, [handleSessionAction]);
+
   // H4: Memoize resize handlers to avoid creating new arrow functions every render
   const resizeHandlers = useMemo(() => ({
     N:  () => appWindow.startResizeDragging("North"),
@@ -207,7 +248,7 @@ function AppContent() {
     SW: () => appWindow.startResizeDragging("SouthWest"),
   }), []);
 
-  const appClassName = `app${verticalTabs ? " vertical-tabs" : ""}`;
+  const appClassName = `app${verticalTabs ? " vertical-tabs" : ""}${sessionPanelOpen ? " session-panel-open" : ""}`;
 
   return (
     <div ref={appRef} className={appClassName}>
@@ -232,21 +273,43 @@ function AppContent() {
             onSaveToProjects={handleSaveToProjects}
             onToggleAbout={toggleAboutTab}
             onToggleUsage={toggleUsageTab}
+            onToggleSessions={toggleSessionPanel}
             onResizeWidth={handleResizeWidth}
             onResizing={setIsResizing}
           />
+          {sessionPanelOpen && (
+            <SessionPanel
+              projectPath={activeProjectPath}
+              isOpen={sessionPanelOpen}
+              onClose={toggleSessionPanel}
+              onResumeSession={handleResumeSession}
+              onForkSession={handleForkSession}
+            />
+          )}
         </>
       ) : (
-        <TabBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onActivate={activateTab}
-          onClose={closeTab}
-          onAdd={addTabAndResetFilter}
-          onSaveToProjects={handleSaveToProjects}
-          onToggleAbout={toggleAboutTab}
-          onToggleUsage={toggleUsageTab}
-        />
+        <>
+          <TabBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onActivate={activateTab}
+            onClose={closeTab}
+            onAdd={addTabAndResetFilter}
+            onSaveToProjects={handleSaveToProjects}
+            onToggleAbout={toggleAboutTab}
+            onToggleUsage={toggleUsageTab}
+            onToggleSessions={toggleSessionPanel}
+          />
+          {sessionPanelOpen && (
+            <SessionPanel
+              projectPath={activeProjectPath}
+              isOpen={sessionPanelOpen}
+              onClose={toggleSessionPanel}
+              onResumeSession={handleResumeSession}
+              onForkSession={handleForkSession}
+            />
+          )}
+        </>
       )}
       <div className="tab-content">
         {tabs.map((tab) => {
@@ -300,14 +363,8 @@ function AppContent() {
                     tabId={tab.id}
                     isActive={isActive}
                     onRequestClose={closeTab}
-                    onResumeSession={(sessionId, cwd) => {
-                      // TODO: open agent tab with resume
-                      console.log("Resume session", sessionId, cwd);
-                    }}
-                    onForkSession={(sessionId, cwd) => {
-                      // TODO: open agent tab with fork
-                      console.log("Fork session", sessionId, cwd);
-                    }}
+                    onResumeSession={(sessionId, cwd) => handleResumeSession(sessionId, cwd)}
+                    onForkSession={(sessionId, cwd) => handleForkSession(sessionId, cwd)}
                     onViewSession={(sessionId) => {
                       // TODO: view session transcript
                       console.log("View session", sessionId);
@@ -317,6 +374,7 @@ function AppContent() {
               ) : tab.type === "agent" ? (
                 <ErrorBoundary tabId={tab.id} onClose={closeTab}>
                   <Terminal
+                    key={`${tab.id}-${tab.resumeSessionId || ""}-${tab.forkSessionId || ""}`}
                     tabId={tab.id}
                     projectPath={tab.projectPath!}
                     modelIdx={tab.modelIdx ?? 0}
@@ -335,6 +393,8 @@ function AppContent() {
                     onRequestClose={closeTab}
                     onTaglineChange={handleTaglineChange}
                     autocompleteEnabled={settings?.autocomplete_enabled !== false}
+                    resumeSessionId={tab.resumeSessionId}
+                    forkSessionId={tab.forkSessionId}
                   />
                 </ErrorBoundary>
               ) : (

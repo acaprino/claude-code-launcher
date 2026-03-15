@@ -18,6 +18,7 @@ interface TabSidebarProps {
   onSaveToProjects?: (tabId: string) => void;
   onToggleAbout: () => void;
   onToggleUsage: () => void;
+  onToggleSessions: () => void;
   onResizeWidth: (width: number) => void;
   onResizing: (resizing: boolean) => void;
 }
@@ -27,7 +28,7 @@ const SIDEBAR_MAX = 360;
 
 export default memo(function TabSidebar({
   tabs, activeTabId, sidebarWidth, onActivate, onClose, onAdd,
-  onSaveToProjects, onToggleAbout, onToggleUsage, onResizeWidth, onResizing,
+  onSaveToProjects, onToggleAbout, onToggleUsage, onToggleSessions, onResizeWidth, onResizing,
 }: TabSidebarProps) {
   const [closingIds, setClosingIds] = useState<Set<string>>(new Set());
   const closingTimersRef = useRef<Map<string, number>>(new Map());
@@ -165,6 +166,13 @@ export default memo(function TabSidebar({
       </div>
 
       <div className="tab-sidebar__footer">
+        <button className="tab-bar-action" onClick={onToggleSessions} title="Sessions (Ctrl+Shift+S)" aria-label="Sessions">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M6 1a5 5 0 1 0 5 5H6V1z" stroke="currentColor" strokeWidth="1.2" fill="none"/>
+            <line x1="6" y1="6" x2="6" y2="2.5" stroke="currentColor" strokeWidth="1.2"/>
+            <line x1="6" y1="6" x2="9" y2="6" stroke="currentColor" strokeWidth="1.2"/>
+          </svg>
+        </button>
         <button className="tab-bar-action" onClick={onToggleUsage} title="Usage Stats (Ctrl+U)" aria-label="Usage Stats">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <rect x="1" y="7" width="2" height="4" rx="0.5" fill="currentColor"/>
