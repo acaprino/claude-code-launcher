@@ -40,7 +40,7 @@ Anvil is a Windows-only Tauri 2 desktop application for selecting and launching 
 | Desktop framework | Tauri | 2.x |
 | Agent SDK | `@anthropic-ai/claude-agent-sdk` | latest |
 | Sidecar runtime | Node.js | -- |
-| Win32 integration | `windows` crate (DWM, filesystem) | 0.62 |
+| Win32 integration | `windows` crate (DWM, filesystem, Job Objects) | 0.62 |
 
 **Source:** `app/package.json`, `app/src-tauri/Cargo.toml`, `sidecar/package.json`
 
@@ -199,8 +199,8 @@ graph TB
 4. **Agent spawn:** `Terminal` component mounts, creates an xterm.js instance, calls `spawnAgent()` which opens a Tauri `Channel<AgentEvent>` and invokes `spawn_agent` IPC. The backend sends a `create` command to the sidecar over stdin. The sidecar creates a `query()` session via the Agent SDK.
 5. **Event loop:** The sidecar emits JSON-line events to stdout. The Rust `SidecarManager` reads these, converts them to `AgentEvent` variants, and routes them to the matching tab's Tauri Channel. The frontend's `handleAgentEvent` callback renders each event as ANSI text in xterm.js via `renderAgentEvent()`.
 6. **User input:** When the SDK needs input (emits `input_required`), the terminal enters `awaiting_input` state. User types into a buffer echoed locally, then on Enter the text is sent via `agent_send` IPC to the sidecar's `send` command, which resolves the SDK's input stream promise.
-7. **Permission handling:** Tool permission requests arrive as `permission` events. The terminal enters `awaiting_permission` state and shows a Y/n prompt. User response is sent via `agent_permission` IPC.
-8. **Cleanup:** On tab close, `killAgent()` sends a `kill` command to the sidecar (which aborts the SDK query). On window close, `SidecarManager::shutdown()` closes stdin and kills the sidecar process.
+7. **Permission handling:** Tool permission requests arrive as `permission` events with optional `permissionSuggestions`. The terminal enters `awaiting_permission` state and renders an interactive permission selector (Yes / session-allow options from suggestions / No). User response is sent via `agent_permission` IPC with optional `updatedPermissions`.
+8. **Cleanup:** On tab close, `killAgent()` sends a `kill` command to the sidecar (which aborts the SDK query). On window close, `SidecarManager::shutdown()` terminates the Win32 Job Object (killing the entire process tree), then kills the direct child as fallback.
 
 ---
 
@@ -254,6 +254,7 @@ The `SidecarManager` manages a single long-lived Node.js child process that wrap
 | `oneshots` | `Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>` | One-shot responses for queries (list_sessions, get_messages) |
 | `available` | `AtomicBool` | Whether sidecar is running |
 | `_process` | `Mutex<Option<Child>>` | Sidecar child process handle |
+| `_job` | `Mutex<Option<JobHandle>>` | Win32 Job Object — kills entire process tree on close |
 | `unavailable_reason` | `Mutex<Option<String>>` | Human-readable reason if unavailable |
 
 **Initialization** (`SidecarManager::new()`, `sidecar.rs:109-149`):
@@ -261,7 +262,7 @@ The `SidecarManager` manages a single long-lived Node.js child process that wrap
 1. Finds Node.js via `find_node()`: checks PATH, then `%LOCALAPPDATA%\anvil\node\node.exe`, then `%ProgramFiles%\nodejs\node.exe`.
 2. Ensures sidecar dependencies are installed (`ensure_deps()`, `sidecar.rs:152-189`): checks for `node_modules` directory, runs `npm install --production` if missing.
 3. Resolves the sidecar directory (`resolve_sidecar_dir()`, `sidecar.rs:192-216`): production mode looks for `sidecar/` next to the exe; dev mode traverses up from `target/debug/` to find the project root.
-4. Starts the sidecar process (`start_sidecar()`, `sidecar.rs:218-351`): spawns `node sidecar.js` with `CREATE_NO_WINDOW` flag.
+4. Starts the sidecar process (`start_sidecar()`): spawns `node sidecar.js` with `CREATE_NO_WINDOW` flag, then creates a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and assigns the child process to it. This ensures all descendant processes (Agent SDK subprocesses) are terminated when the job handle is closed.
 
 **Reader threads:**
 
@@ -275,7 +276,7 @@ pub enum AgentEvent {
     Assistant { text: String, streaming: bool },
     ToolUse { tool: String, input: serde_json::Value },
     ToolResult { tool: String, output: String, success: bool },
-    Permission { tool: String, description: String },
+    Permission { tool: String, description: String, suggestions: serde_json::Value },
     InputRequired {},
     Thinking { text: String },
     Status { status: String, model: String },
@@ -301,7 +302,7 @@ Serialized with `serde(rename_all = "camelCase", tag = "type")`.
 | `register_channel` | `(&self, tab_id: &str, channel: Channel<AgentEvent>)` | Associates a Tauri Channel with a tab ID for event routing |
 | `unregister_channel` | `(&self, tab_id: &str)` | Removes a tab's channel |
 | `register_oneshot` | `(&self, key: &str) -> Receiver<Value>` | Creates a one-shot channel for query responses |
-| `shutdown` | `(&self)` | Drops stdin (triggers sidecar's `rl.on('close')`), then kills the process |
+| `shutdown` | `(&self)` | Drops stdin, terminates Win32 Job Object (kills process tree), then kills direct child as fallback |
 
 ### Project Scanning
 
@@ -474,6 +475,7 @@ The sidecar is a standalone Node.js process that wraps the `@anthropic-ai/claude
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `@anthropic-ai/claude-agent-sdk` | latest | Claude Code agent API |
+| `@anthropic-ai/sdk` | latest | Anthropic API client (used for autocomplete) |
 
 ### Protocol
 
@@ -486,7 +488,7 @@ The sidecar is a standalone Node.js process that wraps the `@anthropic-ai/claude
 | `resume` | `tabId, sessionId, cwd, model, effort, systemPrompt?, allowedTools?` | Resume an existing session |
 | `fork` | `tabId, sessionId, cwd, model, effort, systemPrompt?, allowedTools?` | Fork (branch from) an existing session |
 | `kill` | `tabId` | Kill a session |
-| `permission_response` | `tabId, allow` | Respond to a tool permission request |
+| `permission_response` | `tabId, allow, updatedPermissions?` | Respond to a tool permission request (with optional session-allow permissions) |
 | `set_model` | `tabId, model` | Change model mid-session |
 | `list_sessions` | `tabId, cwd` | List past SDK sessions |
 | `get_messages` | `tabId, sessionId, dir` | Get messages from a past session |
@@ -500,7 +502,7 @@ The sidecar is a standalone Node.js process that wraps the `@anthropic-ai/claude
 | `assistant` | `tabId, text, streaming` | Assistant text (streaming delta or complete) |
 | `tool_use` | `tabId, tool, input, toolUseId` | Tool invocation |
 | `tool_result` | `tabId, tool, output, success` | Tool execution result (via `tool_use_summary`; `tool` is always `"summary"`) |
-| `permission` | `tabId, tool, description, toolUseId` | Permission request for a tool |
+| `permission` | `tabId, tool, description, toolUseId, permissionSuggestions?` | Permission request for a tool (suggestions enable session-allow) |
 | `input_required` | `tabId` | SDK waiting for user input |
 | `thinking` | `tabId, text` | Extended thinking delta |
 | `status` | `tabId, status, model` | Session status change |
@@ -911,7 +913,7 @@ Not a React hook -- exports standalone async functions that wrap Tauri IPC calls
 | `resumeAgent` | `(tabId, sessionId, projectPath, model, effort, onEvent) => Promise<Channel>` | `agent_resume` |
 | `forkAgent` | `(tabId, sessionId, projectPath, model, effort, onEvent) => Promise<Channel>` | `agent_fork` |
 | `killAgent` | `(tabId) => Promise<void>` | `agent_kill` |
-| `respondPermission` | `(tabId, allow) => Promise<void>` | `agent_permission` |
+| `respondPermission` | `(tabId, allow, updatedPermissions?) => Promise<void>` | `agent_permission` |
 | `setAgentModel` | `(tabId, model) => Promise<void>` | `agent_set_model` |
 | `listAgentSessions` | `(cwd?) => Promise<SessionInfo[]>` | `list_agent_sessions` |
 | `getAgentMessages` | `(sessionId, dir?) => Promise<unknown>` | `get_agent_messages` |
@@ -1069,10 +1071,11 @@ Responds to a tool permission request.
 |-----------|------|-------------|
 | `tabId` | `String` | Tab identifier |
 | `allow` | `bool` | Allow or deny the tool |
+| `updatedPermissions` | `Option<serde_json::Value>` | Optional session-allow permission updates forwarded to sidecar |
 
 **Returns:** `Result<(), String>`
 
-**Source:** `commands.rs:422-433`
+**Source:** `commands.rs:440-454`
 
 #### `agent_set_model` (synchronous)
 
@@ -1269,7 +1272,7 @@ The `spawn_agent` (and `agent_resume`, `agent_fork`) commands accept a Tauri `Ch
 | `assistant` | `text, streaming` | Assistant text (streaming delta or complete) |
 | `toolUse` | `tool, input` | Tool invocation with name and parameters |
 | `toolResult` | `tool, output, success` | Tool execution result |
-| `permission` | `tool, description` | Permission request for a tool |
+| `permission` | `tool, description, suggestions` | Permission request for a tool (suggestions enable interactive session-allow selector) |
 | `inputRequired` | -- | SDK ready for next user message |
 | `thinking` | `text` | Extended thinking content |
 | `status` | `status, model` | Session status change |
@@ -1438,6 +1441,7 @@ Themes 8-9 have a `retro: true` flag which enables retro mode CSS.
 | Variable | Used In | Purpose |
 |----------|---------|---------|
 | `ANVIL_PROJECTS_DIR` | `projects.rs` | Override default project directory |
+| `ANTHROPIC_API_KEY` | `sidecar.js` | API key for autocomplete (falls back to Claude OAuth token from `~/.claude/.credentials.json`) |
 
 ---
 
@@ -1449,7 +1453,8 @@ Themes 8-9 have a `retro: true` flag which enables retro mode CSS.
 - **JSON-lines protocol:** Commands flow as JSON-lines over stdin; events flow as JSON-lines over stdout. Simple, debuggable, and no binary serialization complexity.
 - **Agent input state machine:** The Terminal component manages a four-state machine (idle / awaiting_input / processing / awaiting_permission) that controls which user input is accepted and how it's routed.
 - **Streaming deduplication:** The sidecar tracks `hasStreamedText` to avoid re-emitting complete assistant message text that was already sent as streaming deltas.
-- **Permission routing:** When `skipPerms` is false, the sidecar's `canUseTool` callback emits a permission event and blocks on a Promise. The frontend shows a Y/n prompt, and the response resolves the Promise in the sidecar.
+- **Permission routing:** When `skipPerms` is false, the sidecar's `canUseTool` callback emits a permission event (with optional `permissionSuggestions`) and blocks on a Promise. The frontend renders an interactive permission selector with session-allow options derived from suggestions, and the response (with optional `updatedPermissions`) resolves the Promise in the sidecar.
+- **Process tree cleanup:** The sidecar child process is assigned to a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. When Anvil exits, terminating the job object kills all descendant processes (Agent SDK subprocesses), preventing orphaned `node.exe` processes.
 - **WebGL resilience:** `Terminal.tsx` uses multi-layer context loss detection (addon callback, canvas DOM event, periodic health check) with automatic fallback to canvas renderer. Recovery is attempted on visibility change (wake from standby).
 - **Theme crossfade:** Structural CSS containers transition `background-color` and `color` on theme switch (150ms ease-out).
 - **Bookmark management:** Automatically bookmarks user prompts and response starts. Clears all bookmarks on buffer shrinkage (agent `/clear` or `/compact`), with a guard against false positives from resize-induced line reflow.

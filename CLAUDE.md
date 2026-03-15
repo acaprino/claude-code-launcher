@@ -88,6 +88,8 @@ CSS custom properties in `App.css` `:root`:
 
 ### Rust Backend (sidecar.rs)
 - JSON-RPC bridge to Node.js sidecar running @anthropic-ai/claude-agent-sdk. Commands/events flow as JSON-lines over stdin/stdout.
+- Win32 Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) ensures the entire sidecar process tree is killed on app close — not just the direct `node.exe`.
+- Autocomplete uses `@anthropic-ai/sdk` directly (separate from Agent SDK) with OAuth fallback from `~/.claude/.credentials.json`.
 
 ### React Frontend
 - All components use `React.memo` for re-render control.
