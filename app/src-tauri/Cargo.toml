@@ -18,9 +18,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
-win32job = "2"
-which = "7"
 dirs = "6"
+which = "7"
 regex-lite = "0.1"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-shell = "2"
@@ -37,12 +36,7 @@ version = "0.62"
 features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
-    "Win32_System_Console",
-    "Win32_System_Threading",
-    "Win32_System_Pipes",
-    "Win32_Security",
     "Win32_Storage_FileSystem",
-    "Win32_System_IO",
 ]
 
 [profile.release]
@@ -51,5 +45,5 @@ lto = true
 opt-level = 3
 strip = true
 # panic = "unwind" (default) — required for catch_unwind to work in release builds.
-# "abort" was previously set but defeats the panic-isolation strategy in session.rs
-# and projects.rs (catch_unwind is a no-op with panic = "abort").
+# "abort" was previously set but defeats the panic-isolation strategy in
+# projects.rs (catch_unwind is a no-op with panic = "abort").

@@ -308,6 +308,15 @@ pub fn spawn_agent(
     if !sidecar.available() {
         return Err("Agent SDK not available (Node.js not found)".to_string());
     }
+    if crate::projects::is_unc(&project_path) {
+        return Err("UNC paths are not supported".to_string());
+    }
+    if !std::path::Path::new(&project_path).is_dir() {
+        return Err("Project path does not exist or is not a directory".to_string());
+    }
+    if system_prompt.len() > 100_000 {
+        return Err(format!("System prompt too large (max 100000 bytes)"));
+    }
     log_info!("spawn_agent: tab={tab_id}, project={project_path}, model={model}");
 
     sidecar.register_channel(&tab_id, on_event);
@@ -348,6 +357,12 @@ pub fn agent_resume(
     if !sidecar.available() {
         return Err("Agent SDK not available".to_string());
     }
+    if crate::projects::is_unc(&project_path) {
+        return Err("UNC paths are not supported".to_string());
+    }
+    if !std::path::Path::new(&project_path).is_dir() {
+        return Err("Project path does not exist or is not a directory".to_string());
+    }
     log_info!("agent_resume: tab={tab_id}, session={session_id}");
     sidecar.register_channel(&tab_id, on_event);
     sidecar.send_command(&serde_json::json!({
@@ -372,6 +387,12 @@ pub fn agent_fork(
 ) -> Result<(), String> {
     if !sidecar.available() {
         return Err("Agent SDK not available".to_string());
+    }
+    if crate::projects::is_unc(&project_path) {
+        return Err("UNC paths are not supported".to_string());
+    }
+    if !std::path::Path::new(&project_path).is_dir() {
+        return Err("Project path does not exist or is not a directory".to_string());
     }
     log_info!("agent_fork: tab={tab_id}, session={session_id}");
     sidecar.register_channel(&tab_id, on_event);

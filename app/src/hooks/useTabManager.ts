@@ -7,7 +7,6 @@ const SESSION_SAVE_DEBOUNCE_MS = 500;
 interface SavedTab {
   projectPath: string;
   projectName: string;
-  toolIdx: number;
   modelIdx: number;
   effortIdx: number;
   skipPerms: boolean;
@@ -29,7 +28,6 @@ function createRestoredTab(saved: SavedTab): Tab {
     type: "agent",
     projectPath: saved.projectPath,
     projectName: saved.projectName,
-    toolIdx: saved.toolIdx,
     modelIdx: saved.modelIdx,
     effortIdx: saved.effortIdx,
     skipPerms: saved.skipPerms,
@@ -56,7 +54,6 @@ export function useTabManager() {
           .map((s: any) => createRestoredTab({
             projectPath: s.projectPath,
             projectName: typeof s.projectName === "string" ? s.projectName : "Terminal",
-            toolIdx: typeof s.toolIdx === "number" ? s.toolIdx : 0,
             modelIdx: typeof s.modelIdx === "number" ? s.modelIdx : 0,
             effortIdx: typeof s.effortIdx === "number" ? s.effortIdx : 0,
             skipPerms: s.skipPerms === true,
@@ -79,7 +76,7 @@ export function useTabManager() {
   // recalculating on volatile changes like hasNewOutput or exitCode.
   const saveableKey = tabs
     .filter((t) => t.type === "agent" && t.projectPath)
-    .map((t) => `${t.projectPath}|${t.projectName ?? "Terminal"}|${t.toolIdx ?? 0}|${t.modelIdx ?? 0}|${t.effortIdx ?? 0}|${t.skipPerms ?? false}|${t.temporary ?? false}`)
+    .map((t) => `${t.projectPath}|${t.projectName ?? "Terminal"}|${t.modelIdx ?? 0}|${t.effortIdx ?? 0}|${t.skipPerms ?? false}|${t.temporary ?? false}`)
     .join("\n");
 
   const saveableState = useMemo(() =>
@@ -89,7 +86,6 @@ export function useTabManager() {
         .map((t) => ({
           projectPath: t.projectPath,
           projectName: t.projectName ?? "Terminal",
-          toolIdx: t.toolIdx ?? 0,
           modelIdx: t.modelIdx ?? 0,
           effortIdx: t.effortIdx ?? 0,
           skipPerms: t.skipPerms ?? false,
@@ -200,7 +196,7 @@ export function useTabManager() {
   }, []);
 
   // H1: Dedicated callback that guards against redundant array creation
-  // when hasNewOutput is already true (high-frequency PTY output path).
+  // when hasNewOutput is already true (high-frequency agent output path).
   const markNewOutput = useCallback((tabId: string) => {
     setTabs((prev) => {
       const target = prev.find((t) => t.id === tabId);

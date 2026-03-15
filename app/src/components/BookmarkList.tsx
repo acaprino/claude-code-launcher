@@ -54,7 +54,7 @@ export default memo(function BookmarkList({ xterm, isActive, bookmarksRef }: Boo
   }, [xterm, bookmarksRef]);
 
   // Throttle sync+active updates to once per animation frame — these fire on
-  // every PTY chunk (hundreds/sec during heavy output) but the viewport can
+  // every agent event (hundreds/sec during heavy output) but the viewport can
   // only change once per frame.
   const scheduleUpdate = useCallback(() => {
     if (rafRef.current) return;

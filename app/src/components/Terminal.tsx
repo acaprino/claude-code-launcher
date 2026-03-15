@@ -8,6 +8,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { spawnAgent, sendAgentMessage, killAgent, respondPermission, saveClipboardImage } from "../hooks/useAgentSession";
 import { renderAgentEvent } from "../ansiRenderer";
 import { getXtermTheme } from "../themes";
+import { MODELS, EFFORTS } from "../types";
 import type { AgentEvent, ThemeColors } from "../types";
 import Minimap from "./Minimap";
 import BookmarkList from "./BookmarkList";
@@ -592,9 +593,7 @@ export default memo(function Terminal({
       // Show logo directly
       xterm.write(ESC_CURSOR_HIDE + ANSI_LOGO + "\r\n\r\n");
 
-      const MODELS = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5", "claude-sonnet-4-6[1m]", "claude-opus-4-6[1m]"];
-      const EFFORTS = ["high", "medium", "low"];
-      const modelId = MODELS[modelIdx] || "";
+      const modelId = MODELS[modelIdx]?.id || "";
       const effortId = EFFORTS[effortIdx] || "high";
 
       const handleAgentEvent = (event: AgentEvent) => {
@@ -715,15 +714,13 @@ export default memo(function Terminal({
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     // File drag-and-drop: insert dropped paths into agent input
-    const SAFE_WIN_PATH = /^[a-zA-Z]:\\[\w\s.\-\\()]+$/;
     let unlistenDragDrop: (() => void) | null = null;
     getCurrentWebview().onDragDropEvent((event) => {
       if (cancelled) return;
       if (event.payload.type !== "drop") return;
       if (exitedRef.current || !agentStartedRef.current || !isActiveRef.current) return;
-      const safePaths = event.payload.paths.filter((p) => SAFE_WIN_PATH.test(p));
-      if (safePaths.length === 0) return;
-      const paths = safePaths
+      if (event.payload.paths.length === 0) return;
+      const paths = event.payload.paths
         .map((p) => (p.includes(" ") ? `"${p}"` : p))
         .join(" ");
       tryAgentWrite(paths + " ");

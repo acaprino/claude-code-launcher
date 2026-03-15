@@ -25,7 +25,7 @@ function buildAboutBox(version: string) {
 
 function buildStatusBox() {
   const themeCount = THEMES.length;
-  return `  Tools     ✓ claude  ✓ gemini
+  return `  Tools     ✓ claude
   Models    ✓ sonnet  ✓ opus  ✓ haiku  ✓ 1M context
   Themes    ${themeCount} dark themes available
   Effort    high / medium / low
@@ -37,8 +37,7 @@ const SHORTCUTS_NAV = `  Ctrl+T        New tab
   Ctrl+Tab      Next / prev tab
   Enter         Launch project`;
 
-const SHORTCUTS_SETTINGS = `  F1            Cycle tool
-  Tab           Cycle model
+const SHORTCUTS_SETTINGS = `  Tab           Cycle model
   F2            Cycle effort
   F3            Cycle sort
   F4            Toggle skip-perms`;

@@ -8,7 +8,7 @@ import CreateProjectModal from "./modals/CreateProjectModal";
 import LabelProjectModal from "./modals/LabelProjectModal";
 import QuickLaunchModal from "./modals/QuickLaunchModal";
 import SettingsModal from "./modals/SettingsModal";
-import { ProjectInfo, TOOLS, MODELS, EFFORTS, SORT_ORDERS } from "../types";
+import { ProjectInfo, MODELS, EFFORTS, SORT_ORDERS } from "../types";
 import "./NewTabPage.css";
 
 interface NewTabPageProps {
@@ -17,7 +17,6 @@ interface NewTabPageProps {
     tabId: string,
     projectPath: string,
     projectName: string,
-    toolIdx: number,
     modelIdx: number,
     effortIdx: number,
     skipPerms: boolean,
@@ -88,7 +87,6 @@ function NewTabPage({ tabId, onLaunch, onRequestClose, onOpenSystemPrompts, isAc
         tabId,
         project.path,
         project.label ?? project.name,
-        currentSettings.tool_idx,
         currentSettings.model_idx,
         currentSettings.effort_idx,
         currentSettings.skip_perms,
@@ -160,27 +158,17 @@ function NewTabPage({ tabId, onLaunch, onRequestClose, onOpenSystemPrompts, isAc
             onRequestCloseRef.current(tabId);
           }
           break;
-        case "F1":
-          e.preventDefault();
-          updateSettingsRef.current({
-            tool_idx: (currentSettings.tool_idx + 1) % TOOLS.length,
-          });
-          break;
         case "Tab":
           e.preventDefault();
-          if (currentSettings.tool_idx === 0) {
-            updateSettingsRef.current({
-              model_idx: (currentSettings.model_idx + 1) % MODELS.length,
-            });
-          }
+          updateSettingsRef.current({
+            model_idx: (currentSettings.model_idx + 1) % MODELS.length,
+          });
           break;
         case "F2":
           e.preventDefault();
-          if (currentSettings.tool_idx === 0) {
-            updateSettingsRef.current({
-              effort_idx: (currentSettings.effort_idx + 1) % EFFORTS.length,
-            });
-          }
+          updateSettingsRef.current({
+            effort_idx: (currentSettings.effort_idx + 1) % EFFORTS.length,
+          });
           break;
         case "F3":
           e.preventDefault();
@@ -190,9 +178,7 @@ function NewTabPage({ tabId, onLaunch, onRequestClose, onOpenSystemPrompts, isAc
           break;
         case "F4":
           e.preventDefault();
-          if (currentSettings.tool_idx === 0) {
-            updateSettingsRef.current({ skip_perms: !currentSettings.skip_perms });
-          }
+          updateSettingsRef.current({ skip_perms: !currentSettings.skip_perms });
           break;
         case "F5":
           e.preventDefault();
@@ -326,7 +312,7 @@ function NewTabPage({ tabId, onLaunch, onRequestClose, onOpenSystemPrompts, isAc
             }
             const name = dirPath.split(/[\\/]/).pop() ?? "Terminal";
             setActiveModal(null);
-            onLaunch(tabId, dirPath, name, settings.tool_idx, settings.model_idx, settings.effort_idx, settings.skip_perms, settings.autocompact, !addToProjects);
+            onLaunch(tabId, dirPath, name, settings.model_idx, settings.effort_idx, settings.skip_perms, settings.autocompact, !addToProjects);
           }}
         />
       )}

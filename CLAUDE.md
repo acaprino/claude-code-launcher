@@ -19,18 +19,17 @@ A Windows-only Tauri 2 desktop app for selecting and launching Claude Code CLI s
 ## Key Paths
 
 - `app/src/components/` - TabBar, Terminal, Minimap, ProjectList, StatusBar, NewTabPage, AboutPage, Modal, ErrorBoundary
-- `app/src/hooks/` - useTabManager, useProjects, usePty
+- `app/src/hooks/` - useTabManager, useProjects
 - `app/src/contexts/ProjectsContext.tsx` - Shared project state
 - `app/src/themes.ts` - Theme application to CSS variables and xterm
 - `app/src/types.ts` - Type definitions, model/effort/sort/theme constants
-- `app/src-tauri/src/` - Rust backend: main.rs, pty.rs, projects.rs, commands.rs, tools.rs, session.rs, logging.rs, watcher.rs
+- `app/src-tauri/src/` - Rust backend: main.rs, sidecar.rs, projects.rs, commands.rs, logging.rs, watcher.rs
 
 For detailed architecture, IPC protocol, and development guide, see `docs/TECHNICAL.md`.
 
-## Tools (F1 to cycle)
+## Tool
 
-- `claude` - Claude Code CLI (`@anthropic-ai/claude-code`)
-- `gemini` - Gemini CLI (`@google/gemini-cli`); model/effort/perms hidden when selected
+- Claude Code (Agent SDK via `@anthropic-ai/claude-agent-sdk`)
 
 ## Models (Tab to cycle, Claude only)
 
@@ -43,7 +42,6 @@ sonnet / opus / haiku / sonnet [1M] / opus [1M]
 - **Ctrl+Tab / Ctrl+Shift+Tab**: Next/previous tab
 - **Ctrl+C**: Copy selection (or SIGINT if no selection)
 - **Ctrl+V**: Paste (text or image path)
-- **F1**: Cycle tool (claude/gemini)
 - **Tab**: Cycle model (Claude only)
 - **F2**: Cycle effort level (high/medium/low, Claude only)
 - **F3**: Cycle sort order (alpha/last used/most used)
@@ -76,16 +74,12 @@ CSS custom properties in `App.css` `:root`:
 
 ## Architecture Notes
 
-### Rust Backend (session.rs, pty.rs)
-- **Per-session write mutex**: Each `PtySession` has its own `Mutex<HANDLE>` for write serialization. The global `sessions` mutex is only held briefly to look up sessions, never during I/O.
-- **Two-phase reaper**: Collects stale session IDs under the global lock, releases lock, then kills individually.
-- **Pseudo console cleanup**: `kill()` closes the HPCON handle to break the pipe and unblock the reader thread, preventing handle/thread leaks.
-- **UTF-8 boundary handling**: The reader thread maintains a remainder buffer to reassemble multi-byte sequences split across reads.
-- **WebGL resilience**: Terminal.tsx uses multi-layer context loss detection (addon callback, canvas DOM event, periodic health check) with automatic fallback to canvas renderer.
+### Rust Backend (sidecar.rs)
+- JSON-RPC bridge to Node.js sidecar running @anthropic-ai/claude-agent-sdk. Commands/events flow as JSON-lines over stdin/stdout.
 
 ### React Frontend
 - All components use `React.memo` for re-render control.
-- Terminal callbacks use refs to avoid stale closures in high-frequency PTY events.
+- Terminal callbacks use refs to avoid stale closures in high-frequency agent events.
 - `hasNewOutput` updates are guarded — the tab array is only recreated once per new-output burst, not on every chunk.
 - Minimap uses incremental canvas rendering with cached theme colors, separating viewport updates from full redraws.
 - `safeRefresh()` preserves scroll position during terminal refreshes to prevent viewport jumping.
@@ -99,8 +93,8 @@ CSS custom properties in `App.css` `:root`:
 ## Constraints
 
 - Windows-only. Do not add cross-platform abstractions unless asked.
-- PTY sessions are killed on tab close via `killSession()`.
-- Dropped file paths are validated against safe Windows path characters before writing to PTY.
+- Agent sessions are killed on tab close via `killAgent()`.
+- Dropped file paths are validated against safe Windows path characters before sending to the agent.
 - Hidden directories (starting with `.`) are excluded from project scanning.
 - Default project directory is `D:\Projects`, overridable via settings (multiple directories supported).
 

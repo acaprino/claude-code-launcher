@@ -27,8 +27,6 @@ pub struct Settings {
     #[serde(default)]
     pub version: u32,
     #[serde(default)]
-    pub tool_idx: usize,
-    #[serde(default)]
     pub model_idx: usize,
     #[serde(default)]
     pub effort_idx: usize,
@@ -93,7 +91,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: 1,
-            tool_idx: 0,
             model_idx: 0,
             effort_idx: 0,
             sort_idx: 0,
