@@ -1,18 +1,15 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, respondPermission } from "../hooks/useAgentSession";
 import { MODELS, EFFORTS } from "../types";
-import type { AgentEvent, ChatMessage, PermissionSuggestion } from "../types";
+import type { AgentEvent, Attachment, ChatMessage, PermissionSuggestion } from "../types";
+import { sanitizeInput } from "../utils/sanitizeInput";
+import ChatInput from "./chat/ChatInput";
 import MessageBubble from "./chat/MessageBubble";
 import ToolCard from "./chat/ToolCard";
 import PermissionCard from "./chat/PermissionCard";
 import ThinkingIndicator from "./chat/ThinkingIndicator";
 import ResultBar from "./chat/ResultBar";
 import "./ChatView.css";
-
-/** Strip non-BMP characters (emoji etc.) that cause issues in agent messages. */
-function stripNonBmp(text: string): string {
-  return text.replace(/[\uD800-\uDFFF]|[\u{10000}-\u{10FFFF}]/gu, "");
-}
 
 interface ChatViewProps {
   tabId: string;
@@ -41,12 +38,13 @@ export default memo(function ChatView({
 }: ChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputState, setInputState] = useState<"idle" | "awaiting_input" | "processing">("idle");
-  const [inputText, setInputText] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+  const [droppedFiles, setDroppedFiles] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const exitedRef = useRef(false);
   const agentStartedRef = useRef(false);
   const tabIdRef = useRef(tabId);
+  const dragCounterRef = useRef(0);
   // StrictMode kill-cancellation: cleanup sets true, re-mount sets false.
   // Deferred kill only fires if still true (real unmount, not StrictMode).
   const pendingKillRef = useRef(false);
@@ -77,13 +75,6 @@ export default memo(function ChatView({
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
   }, [messages]);
-
-  // Focus input when active + awaiting input
-  useEffect(() => {
-    if (isActive && inputState === "awaiting_input") {
-      inputRef.current?.focus();
-    }
-  }, [isActive, inputState]);
 
   // ── Agent lifecycle ─────────────────────────────────────────────
   useEffect(() => {
@@ -223,7 +214,7 @@ export default memo(function ChatView({
       ? resumeAgent(tabId, resumeSessionId, projectPath, modelId, effortId, handleAgentEvent)
       : forkSessionId
         ? forkAgent(tabId, forkSessionId, projectPath, modelId, effortId, handleAgentEvent)
-        : spawnAgent(tabId, projectPath, modelId, effortId, stripNonBmp(systemPrompt), skipPerms, handleAgentEvent);
+        : spawnAgent(tabId, projectPath, modelId, effortId, sanitizeInput(systemPrompt), skipPerms, handleAgentEvent);
 
     launchPromise
       .then(() => {
@@ -254,13 +245,18 @@ export default memo(function ChatView({
   }, []);
 
   // ── Input submission ────────────────────────────────────────────
-  const handleSubmit = () => {
-    const text = inputText.trim();
-    if (!text || !agentStartedRef.current) return;
-    setMessages(prev => [...prev, { id: nextId(), role: "user", text, timestamp: Date.now() }]);
-    setInputText("");
+  const handleSubmit = (text: string, attachments: Attachment[]) => {
+    if (!agentStartedRef.current) return;
+    // Build message with attachment paths prepended
+    let fullText = text;
+    if (attachments.length > 0) {
+      const attachPrefix = attachments.map(a => `[Attached: ${a.path}]`).join("\n");
+      fullText = attachPrefix + (text ? "\n\n" + text : "");
+    }
+    if (!fullText.trim()) return;
+    setMessages(prev => [...prev, { id: nextId(), role: "user", text: fullText, timestamp: Date.now() }]);
     setInputState("processing");
-    sendAgentMessage(tabId, text).catch((err) => {
+    sendAgentMessage(tabId, fullText).catch((err) => {
       setMessages(prev => [...prev, { id: nextId(), role: "error", code: "send", message: String(err), timestamp: Date.now() }]);
     });
   };
@@ -286,8 +282,42 @@ export default memo(function ChatView({
     }
   };
 
+  // ── Drag & Drop ─────────────────────────────────────────────────
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current++;
+    if (dragCounterRef.current === 1) setIsDragging(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) setIsDragging(false);
+  };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      const paths = files.map(f => (f as File & { path?: string }).path || f.name);
+      setDroppedFiles(paths);
+    }
+  };
+
   return (
-    <div className="chat-view" style={{ fontFamily: `'${fontFamily}', 'Consolas', monospace`, fontSize }} onKeyDown={handleKeyDown} tabIndex={0}>
+    <div
+      className="chat-view"
+      style={{ fontFamily: `'${fontFamily}', 'Consolas', monospace`, fontSize }}
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div ref={chatContainerRef} className="chat-messages">
         {messages.length === 0 && inputState === "idle" && (
           <div className="chat-msg chat-msg--status">Starting agent...</div>
@@ -307,7 +337,7 @@ export default memo(function ChatView({
             case "result":
               return <div key={msg.id} className="chat-msg chat-msg--result"><ResultBar cost={msg.cost} inputTokens={msg.inputTokens} outputTokens={msg.outputTokens} cacheReadTokens={msg.cacheReadTokens} turns={msg.turns} durationMs={msg.durationMs} /></div>;
             case "error":
-              return <div key={msg.id} className="chat-msg chat-msg--error">{msg.code === "rate_limit" ? "⏳" : "⚠"} {msg.message}</div>;
+              return <div key={msg.id} className="chat-msg chat-msg--error">{msg.code === "rate_limit" ? "\u23F3" : "\u26A0"} {msg.message}</div>;
             case "status":
               return <div key={msg.id} className="chat-msg chat-msg--status">[{msg.model}] {msg.status}</div>;
             default:
@@ -317,26 +347,29 @@ export default memo(function ChatView({
         <div ref={messagesEndRef} />
       </div>
       {inputState === "awaiting_input" && (
-        <div className="chat-input-bar">
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-            placeholder="Type a message..."
-            rows={1}
-            autoFocus
-          />
-        </div>
+        <ChatInput
+          onSubmit={handleSubmit}
+          disabled={false}
+          processing={false}
+          isActive={isActive}
+          droppedFiles={droppedFiles}
+          onDroppedFilesConsumed={() => setDroppedFiles([])}
+        />
       )}
       {inputState === "processing" && !messages.some(m => m.role === "permission" && !m.resolved) && (
-        <div className="chat-thinking-bar"><ThinkingIndicator /></div>
+        <ChatInput
+          onSubmit={handleSubmit}
+          disabled={true}
+          processing={true}
+          isActive={isActive}
+          droppedFiles={droppedFiles}
+          onDroppedFilesConsumed={() => setDroppedFiles([])}
+        />
+      )}
+      {isDragging && (
+        <div className="chat-drop-overlay">
+          <span className="chat-drop-overlay-text">Drop files here</span>
+        </div>
       )}
     </div>
   );

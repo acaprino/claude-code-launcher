@@ -55,6 +55,7 @@ export interface Settings {
   sidebar_width?: number;
   autocomplete_enabled?: boolean;
   session_panel_open?: boolean;
+  input_style?: "chat" | "terminal";
 }
 
 export interface UsageEntry {
@@ -261,4 +262,12 @@ export interface SessionInfo {
   createdAt: number;
   customTitle: string;
   fileSize: number;
+}
+
+export interface Attachment {
+  id: string;
+  path: string;
+  name: string;
+  type: "file" | "image";
+  thumbnail?: string;
 }

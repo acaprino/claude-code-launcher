@@ -1,0 +1,184 @@
+/* ── Input Bar Container ──────────────────────────────────────── */
+.chat-input-container {
+  border-top: 1px solid color-mix(in srgb, var(--overlay0) 40%, transparent);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Terminal mode: no border, blends with message flow */
+.chat-input-container.terminal-mode {
+  border-top: none;
+  padding-top: var(--space-3);
+}
+
+/* ── Attachment Chips Row ─────────────────────────────────────── */
+.attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-bottom: var(--space-2);
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border: 1px solid var(--overlay0);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  max-width: 200px;
+}
+
+.attachment-thumb {
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
+  border-radius: 2px;
+}
+
+.attachment-icon { font-size: var(--text-sm); }
+
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  opacity: 0.6;
+  line-height: 1;
+}
+
+.attachment-remove:hover { opacity: 1; color: var(--red); }
+
+/* ── Main Input Row ───────────────────────────────────────────── */
+.chat-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.chat-input-attach-btn {
+  background: none;
+  border: 1px solid var(--overlay0);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: var(--text-base);
+  flex-shrink: 0;
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.chat-input-attach-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chat-input-textarea {
+  flex: 1;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  color: var(--text);
+  border: 1px solid var(--overlay0);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-family: inherit;
+  font-size: inherit;
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+  max-height: calc(var(--text-base) * 1.5 * 6 + var(--space-2) * 2);
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.chat-input-textarea:focus {
+  border-color: var(--accent);
+}
+
+/* Processing state pulse */
+.chat-input-container.processing .chat-input-textarea {
+  animation: input-pulse 2s ease-in-out infinite;
+}
+
+@keyframes input-pulse {
+  0%, 100% { border-color: var(--overlay0); }
+  50% { border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+}
+
+.chat-input-send-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--crust);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+}
+
+.chat-input-send-btn:hover { opacity: 0.85; }
+.chat-input-send-btn:active { transform: translateY(1px); }
+.chat-input-send-btn:disabled { opacity: 0.3; cursor: default; }
+
+/* ── Drag & Drop Overlay ──────────────────────────────────────── */
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+}
+
+.chat-drop-overlay-text {
+  color: var(--accent);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+/* ── Floating Mini-Input (terminal mode, scrolled up) ─────────── */
+.chat-mini-input {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  border-top: 1px solid color-mix(in srgb, var(--overlay0) 40%, transparent);
+  padding: var(--space-1) var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  animation: mini-in 0.2s ease-out;
+}
+
+@keyframes mini-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-mini-input .chat-input-textarea {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+}

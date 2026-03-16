@@ -61,6 +61,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(sidecar_manager)
         .setup(|app| {
             log_info!("setup: loading initial settings");
