@@ -311,3 +311,130 @@
 .result-sep { opacity: 0.3; }
 
 /* Old input bar styles removed — now in ChatInput.css */
+
+/* ── Code Block ────────────────────────────────────────────────── */
+.code-block-wrapper {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin: var(--space-2) 0;
+  border: 1px solid color-mix(in srgb, var(--overlay0) 30%, transparent);
+}
+
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  font-size: var(--text-xs);
+}
+
+.code-block-lang {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.code-block-copy {
+  background: none;
+  border: 1px solid var(--overlay0);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  padding: 1px var(--space-2);
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.code-block-copy:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Streaming Indicator ───────────────────────────────────────── */
+.streaming-bar {
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: streaming-pulse 1.5s ease-in-out infinite;
+  margin-top: var(--space-1);
+}
+
+@keyframes streaming-pulse {
+  0%, 100% { opacity: 0.3; transform: scaleX(0.5); }
+  50% { opacity: 1; transform: scaleX(1); }
+}
+
+/* ── ThinkingBlock ─────────────────────────────────────────────── */
+.thinking-block {
+  background: var(--surface);
+  border-left: 4px solid var(--overlay0);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  overflow: hidden;
+}
+
+.thinking-block.ended { opacity: 0.6; }
+
+.thinking-block-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.thinking-block-header:hover {
+  background: var(--hover-overlay-subtle);
+}
+
+.thinking-block-icon { font-size: var(--text-sm); }
+.thinking-block-title { flex: 1; }
+.thinking-block-toggle { opacity: 0.4; font-size: var(--text-xs); }
+
+.thinking-block-body {
+  padding: var(--space-1) var(--space-3) var(--space-2);
+}
+
+.thinking-block-text {
+  white-space: pre-wrap;
+  font-style: italic;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* ── ToolCard spinning icon ────────────────────────────────────── */
+.tool-card-icon.spinning {
+  animation: tool-spin 1.5s linear infinite;
+}
+
+@keyframes tool-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Permission type colors ────────────────────────────────────── */
+.perm-card.perm-type-read.pending {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.perm-card.perm-type-write.pending {
+  border-color: color-mix(in srgb, var(--yellow) 30%, transparent);
+  background: color-mix(in srgb, var(--yellow) 5%, transparent);
+}
+
+.perm-card.perm-type-exec.pending {
+  border-color: color-mix(in srgb, var(--yellow) 40%, transparent);
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+}
+
+.perm-card.perm-type-web.pending {
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.perm-card-type-icon { margin-right: var(--space-1); }

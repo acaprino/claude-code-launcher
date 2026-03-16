@@ -247,7 +247,7 @@ export type ChatMessage =
   | { id: string; role: "assistant"; text: string; streaming: boolean; timestamp: number }
   | { id: string; role: "tool"; tool: string; input: unknown; output?: string; success?: boolean; timestamp: number }
   | { id: string; role: "permission"; tool: string; description: string; suggestions?: PermissionSuggestion[]; resolved?: boolean; allowed?: boolean; timestamp: number }
-  | { id: string; role: "thinking"; text: string; timestamp: number }
+  | { id: string; role: "thinking"; text: string; ended?: boolean; timestamp: number }
   | { id: string; role: "result"; cost: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; turns: number; durationMs: number; isError: boolean; sessionId: string; timestamp: number }
   | { id: string; role: "error"; code: string; message: string; timestamp: number }
   | { id: string; role: "status"; status: string; model: string; timestamp: number };

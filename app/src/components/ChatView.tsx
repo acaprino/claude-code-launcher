@@ -7,7 +7,7 @@ import ChatInput from "./chat/ChatInput";
 import MessageBubble from "./chat/MessageBubble";
 import ToolCard from "./chat/ToolCard";
 import PermissionCard from "./chat/PermissionCard";
-import ThinkingIndicator from "./chat/ThinkingIndicator";
+import ThinkingBlock from "./chat/ThinkingBlock";
 import ResultBar from "./chat/ResultBar";
 import "./ChatView.css";
 
@@ -183,9 +183,9 @@ export default memo(function ChatView({
         });
         onTaglineChangeRef.current?.(tabIdRef.current, "Thinking...");
       } else if (event.type === "result") {
-        // Remove thinking messages, add result
+        // Mark thinking messages as ended (collapsed), add result
         setMessages(prev => [
-          ...prev.filter(m => m.role !== "thinking"),
+          ...prev.map(m => m.role === "thinking" && !m.ended ? { ...m, ended: true } as ChatMessage : m),
           { id: nextId(), role: "result", ...event, timestamp: Date.now() },
         ]);
         onTaglineChangeRef.current?.(tabIdRef.current, "");
@@ -327,13 +327,18 @@ export default memo(function ChatView({
             case "user":
               return <div key={msg.id} className="chat-msg chat-msg--user">{msg.text}</div>;
             case "assistant":
-              return <div key={msg.id} className="chat-msg chat-msg--assistant"><MessageBubble text={msg.text} streaming={msg.streaming} /></div>;
+              return (
+                <div key={msg.id} className="chat-msg chat-msg--assistant">
+                  <MessageBubble text={msg.text} streaming={msg.streaming} />
+                  {msg.streaming && <div className="streaming-bar" />}
+                </div>
+              );
             case "tool":
               return <div key={msg.id} className="chat-msg chat-msg--tool"><ToolCard tool={msg.tool} input={msg.input} output={msg.output} success={msg.success} /></div>;
             case "permission":
               return <div key={msg.id} className="chat-msg chat-msg--permission"><PermissionCard tool={msg.tool} description={msg.description} suggestions={msg.suggestions} resolved={msg.resolved} allowed={msg.allowed} onRespond={(allow, sugg) => handlePermissionRespond(msg.id, allow, sugg)} /></div>;
             case "thinking":
-              return <div key={msg.id} className="chat-msg chat-msg--thinking"><ThinkingIndicator /></div>;
+              return <div key={msg.id} className="chat-msg chat-msg--thinking"><ThinkingBlock text={msg.text} ended={msg.ended} /></div>;
             case "result":
               return <div key={msg.id} className="chat-msg chat-msg--result"><ResultBar cost={msg.cost} inputTokens={msg.inputTokens} outputTokens={msg.outputTokens} cacheReadTokens={msg.cacheReadTokens} turns={msg.turns} durationMs={msg.durationMs} /></div>;
             case "error":
