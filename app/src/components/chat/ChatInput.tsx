@@ -4,11 +4,15 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { sanitizeInput } from "../../utils/sanitizeInput";
 import { saveClipboardImage } from "../../hooks/useAgentSession";
 import AttachmentChip from "./AttachmentChip";
+import CommandMenu, { type Command } from "./CommandMenu";
+import MentionMenu, { type Mention } from "./MentionMenu";
 import type { Attachment } from "../../types";
 import "./ChatInput.css";
 
 interface Props {
   onSubmit: (text: string, attachments: Attachment[]) => void;
+  onCommand?: (command: Command) => void;
+  onMention?: (mention: Mention) => void;
   disabled: boolean;
   processing: boolean;
   isActive: boolean;
@@ -28,9 +32,12 @@ function extToType(name: string): "file" | "image" {
   return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext) ? "image" : "file";
 }
 
-export default memo(function ChatInput({ onSubmit, disabled, processing, isActive, inputStyle = "chat", droppedFiles, onDroppedFilesConsumed }: Props) {
+export default memo(function ChatInput({ onSubmit, onCommand, onMention, disabled, processing, isActive, inputStyle = "chat", droppedFiles, onDroppedFilesConsumed }: Props) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [showCommandMenu, setShowCommandMenu] = useState(false);
+  const [showMentionMenu, setShowMentionMenu] = useState(false);
+  const [menuFilter, setMenuFilter] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-focus when active and not disabled
@@ -76,16 +83,66 @@ export default memo(function ChatInput({ onSubmit, disabled, processing, isActiv
     onSubmit(sanitized, attachments);
     setText("");
     setAttachments([]);
+    setShowCommandMenu(false);
+    setShowMentionMenu(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
   }, [text, attachments, onSubmit]);
 
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setText(val);
+
+    // Detect / command trigger (/ at start of line)
+    if (val.startsWith("/")) {
+      setShowCommandMenu(true);
+      setShowMentionMenu(false);
+      setMenuFilter(val);
+    } else if (val.includes("@")) {
+      // Detect @ mention trigger
+      const atIdx = val.lastIndexOf("@");
+      const afterAt = val.slice(atIdx);
+      if (!/\s/.test(afterAt) || afterAt.length <= 1) {
+        setShowMentionMenu(true);
+        setShowCommandMenu(false);
+        setMenuFilter(afterAt);
+      } else {
+        setShowMentionMenu(false);
+      }
+    } else {
+      setShowCommandMenu(false);
+      setShowMentionMenu(false);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Let menus handle arrow keys and Enter when open
+    if (showCommandMenu || showMentionMenu) {
+      if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(e.key)) {
+        return; // Handled by CommandMenu/MentionMenu keydown listener
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (!disabled && hasContent) handleSubmit();
     }
+  };
+
+  const handleCommandSelect = (command: Command) => {
+    setShowCommandMenu(false);
+    setText("");
+    onCommand?.(command);
+  };
+
+  const handleMentionSelect = (mention: Mention) => {
+    setShowMentionMenu(false);
+    // Replace the @... text with the mention
+    const atIdx = text.lastIndexOf("@");
+    const before = text.slice(0, atIdx);
+    setText(before + mention.name + " ");
+    onMention?.(mention);
+    textareaRef.current?.focus();
   };
 
   const removeAttachment = useCallback((id: string) => {
@@ -160,34 +217,50 @@ export default memo(function ChatInput({ onSubmit, disabled, processing, isActiv
           ))}
         </div>
       )}
-      <div className="chat-input-row">
-        <button
-          className="chat-input-attach-btn"
-          onClick={handleAttachClick}
-          title="Attach files"
-          disabled={disabled}
-        >
-          +
-        </button>
-        <textarea
-          ref={textareaRef}
-          className="chat-input-textarea"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder="Type a message..."
-          rows={1}
-          disabled={disabled}
-        />
-        <button
-          className="chat-input-send-btn"
-          onClick={handleSubmit}
-          disabled={disabled || !hasContent}
-          title="Send message"
-        >
-          &gt;
-        </button>
+      <div className="command-menu-wrapper">
+        {showCommandMenu && (
+          <CommandMenu
+            filter={menuFilter}
+            onSelect={handleCommandSelect}
+            onDismiss={() => { setShowCommandMenu(false); setText(""); }}
+          />
+        )}
+        {showMentionMenu && (
+          <MentionMenu
+            filter={menuFilter}
+            onSelect={handleMentionSelect}
+            onDismiss={() => setShowMentionMenu(false)}
+          />
+        )}
+        <div className="chat-input-row">
+          <button
+            className="chat-input-attach-btn"
+            onClick={handleAttachClick}
+            title="Attach files"
+            disabled={disabled}
+          >
+            +
+          </button>
+          <textarea
+            ref={textareaRef}
+            className="chat-input-textarea"
+            value={text}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder="Type a message... (/ for commands, @ for models)"
+            rows={1}
+            disabled={disabled}
+          />
+          <button
+            className="chat-input-send-btn"
+            onClick={handleSubmit}
+            disabled={disabled || !hasContent}
+            title="Send message"
+          >
+            &gt;
+          </button>
+        </div>
       </div>
     </div>
   );

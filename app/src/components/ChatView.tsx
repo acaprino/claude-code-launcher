@@ -4,6 +4,7 @@ import { MODELS, EFFORTS } from "../types";
 import type { AgentEvent, Attachment, ChatMessage, PermissionSuggestion } from "../types";
 import { sanitizeInput } from "../utils/sanitizeInput";
 import ChatInput from "./chat/ChatInput";
+import type { Command } from "./chat/CommandMenu";
 import MessageBubble from "./chat/MessageBubble";
 import ToolCard from "./chat/ToolCard";
 import PermissionCard from "./chat/PermissionCard";
@@ -298,6 +299,20 @@ export default memo(function ChatView({
     }
   };
 
+  // ── Slash commands ─────────────────────────────────────────────
+  const handleCommand = (command: Command) => {
+    if (command.name === "/clear") {
+      setMessages([]);
+    } else if (command.name === "/sidebar") {
+      setSidebarOpen(prev => !prev);
+    } else if (command.name === "/compact") {
+      // Send compact command to agent
+      sendAgentMessage(tabId, "/compact").catch(console.error);
+      setInputState("processing");
+    }
+    // Other commands can be added here
+  };
+
   // ── Drag & Drop ─────────────────────────────────────────────────
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -372,6 +387,7 @@ export default memo(function ChatView({
       {inputState === "awaiting_input" && (
         <ChatInput
           onSubmit={handleSubmit}
+          onCommand={handleCommand}
           disabled={false}
           processing={false}
           isActive={isActive}
@@ -382,6 +398,7 @@ export default memo(function ChatView({
       {inputState === "processing" && !messages.some(m => m.role === "permission" && !m.resolved) && (
         <ChatInput
           onSubmit={handleSubmit}
+          onCommand={handleCommand}
           disabled={true}
           processing={true}
           isActive={isActive}
