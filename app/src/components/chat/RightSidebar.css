@@ -1,12 +1,33 @@
 /* ── Right Sidebar ─────────────────────────────────────────────── */
 .right-sidebar {
-  width: 220px;
+  width: var(--right-sidebar-width);
   min-width: 150px;
-  max-width: 350px;
+  max-width: 400px;
   border-left: 1px solid color-mix(in srgb, var(--overlay0) 30%, transparent);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+}
+
+.right-sidebar__resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-handle-width);
+  height: 100%;
+  cursor: col-resize;
+  z-index: var(--z-resize);
+  background: transparent;
+  transition: background 0.15s ease-out;
+}
+
+.right-sidebar__resize:hover {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.right-sidebar__resize:active {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .right-sidebar-tabs {
@@ -127,8 +148,7 @@
 /* ── Sublime-style Minimap (always-visible strip) ────────────── */
 .minimap-panel-sublime {
   position: relative;
-  width: 80px;
-  min-width: 80px;
+  width: 100%;
   cursor: pointer;
   font-size: 1.5px;
   line-height: 1.1;
@@ -136,7 +156,6 @@
   padding: 2px 0;
   user-select: none;
   background: var(--crust);
-  border-left: 1px solid color-mix(in srgb, var(--overlay0) 15%, transparent);
 }
 
 .minimap-viewport {

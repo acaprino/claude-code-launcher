@@ -249,6 +249,7 @@
   cursor: pointer;
   font-size: var(--text-sm);
   transition: background 0.1s ease-out;
+  overflow: hidden;
 }
 
 .command-item:hover,
@@ -272,12 +273,21 @@
   color: var(--accent);
   font-weight: 600;
   min-width: 80px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .command-desc {
   color: var(--text-dim);
   font-size: var(--text-xs);
   opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .command-arg-hint {

@@ -95,11 +95,17 @@ export default memo(function ChatInput({ onSubmit, onCommand, disabled, processi
     const val = e.target.value;
     setText(val);
 
-    // Detect / command trigger (/ at start of line)
-    if (val.startsWith("/")) {
-      setShowCommandMenu(true);
-      setShowMentionMenu(false);
-      setMenuFilter(val);
+    // Detect / command trigger (/ at start of text or after whitespace)
+    const slashIdx = val.lastIndexOf("/");
+    if (slashIdx >= 0 && (slashIdx === 0 || /\s/.test(val[slashIdx - 1]))) {
+      const afterSlash = val.slice(slashIdx);
+      if (!/\s/.test(afterSlash.slice(1)) || afterSlash.length <= 1) {
+        setShowCommandMenu(true);
+        setShowMentionMenu(false);
+        setMenuFilter(afterSlash);
+      } else {
+        setShowCommandMenu(false);
+      }
     } else if (val.includes("@")) {
       // Detect @ mention trigger
       const atIdx = val.lastIndexOf("@");

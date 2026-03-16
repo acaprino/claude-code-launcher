@@ -33,7 +33,7 @@ export default memo(function CommandMenu({ filter, sdkCommands = [], onSelect, o
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden", position: "fixed" });
 
-  const lowerFilter = filter.toLowerCase();
+  const lowerFilter = filter.replace(/^\//, "").toLowerCase();
 
   const { filteredLocal, filteredSdk, selectableItems } = useMemo(() => {
     const sdkMapped: Command[] = sdkCommands
@@ -45,12 +45,20 @@ export default memo(function CommandMenu({ filter, sdkCommands = [], onSelect, o
         }
         return acc;
       }, []);
-    const local = LOCAL_COMMANDS.filter(
-      (c) => c.name.toLowerCase().includes(lowerFilter) || c.description.toLowerCase().includes(lowerFilter),
-    );
-    const sdk = sdkMapped.filter(
-      (c) => c.name.toLowerCase().includes(lowerFilter) || c.description.toLowerCase().includes(lowerFilter),
-    );
+    if (!lowerFilter) return { filteredLocal: LOCAL_COMMANDS, filteredSdk: sdkMapped, selectableItems: [...LOCAL_COMMANDS, ...sdkMapped] };
+    const matchAndSort = (list: Command[]) => {
+      const matches = list.filter(
+        (c) => c.name.toLowerCase().includes(lowerFilter) || c.description.toLowerCase().includes(lowerFilter),
+      );
+      const starts: Command[] = [];
+      const rest: Command[] = [];
+      for (const c of matches) {
+        (c.name.slice(1).toLowerCase().startsWith(lowerFilter) ? starts : rest).push(c);
+      }
+      return [...starts, ...rest];
+    };
+    const local = matchAndSort(LOCAL_COMMANDS);
+    const sdk = matchAndSort(sdkMapped);
     return { filteredLocal: local, filteredSdk: sdk, selectableItems: [...local, ...sdk] };
   }, [sdkCommands, lowerFilter]);
 
@@ -66,9 +74,9 @@ export default memo(function CommandMenu({ filter, sdkCommands = [], onSelect, o
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const maxH = Math.max(120, Math.min(Math.max(spaceAbove, spaceBelow), 400));
       if (spaceAbove >= spaceBelow) {
-        setStyle({ position: "fixed", bottom: window.innerHeight - rect.top + 2, left: rect.left, width: rect.width, maxHeight: maxH });
+        setStyle({ position: "fixed", bottom: window.innerHeight - rect.top + 2, top: "auto", left: rect.left, right: "auto", width: rect.width, maxHeight: maxH });
       } else {
-        setStyle({ position: "fixed", top: rect.bottom + 2, left: rect.left, width: rect.width, maxHeight: maxH });
+        setStyle({ position: "fixed", top: rect.bottom + 2, bottom: "auto", left: rect.left, right: "auto", width: rect.width, maxHeight: maxH });
       }
     };
     update();

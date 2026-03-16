@@ -42,6 +42,7 @@
   --sidebar-max-width: 360px;
   --sidebar-handle-width: 4px;
   --session-panel-width: 260px;
+  --right-sidebar-width: 220px;
 }
 
 *, *::before, *::after {

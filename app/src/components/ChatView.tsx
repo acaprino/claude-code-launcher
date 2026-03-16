@@ -14,7 +14,6 @@ import PermissionCard from "./chat/PermissionCard";
 import ThinkingBlock from "./chat/ThinkingBlock";
 import ResultBar from "./chat/ResultBar";
 import RightSidebar from "./chat/RightSidebar";
-import MinimapPanel from "./chat/MinimapPanel";
 import "./ChatView.css";
 
 /** Patterns for parsing user message attachments */
@@ -687,7 +686,6 @@ export default memo(function ChatView({
         </div>
       )}
       </div>{/* end chat-main-col */}
-      <MinimapPanel messages={deferredMessages} scrollContainerRef={chatContainerRef} />
       {sidebarOpen && (
         <RightSidebar messages={deferredMessages} onScrollToMessage={handleScrollToMessage} scrollContainerRef={chatContainerRef} />
       )}

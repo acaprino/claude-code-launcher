@@ -25,10 +25,17 @@ export default memo(function MentionMenu({ filter, agents = [], onSelect, onDism
       name: `@${a.name}`,
       display: a.description,
     }));
-    const lf = filter.toLowerCase();
-    return options.filter(
+    const lf = filter.replace(/^@/, "").toLowerCase();
+    if (!lf) return options;
+    const matches = options.filter(
       (m) => m.name.toLowerCase().includes(lf) || m.display.toLowerCase().includes(lf),
     );
+    const starts: Mention[] = [];
+    const rest: Mention[] = [];
+    for (const m of matches) {
+      (m.name.slice(1).toLowerCase().startsWith(lf) ? starts : rest).push(m);
+    }
+    return [...starts, ...rest];
   }, [agents, filter]);
 
   useEffect(() => { setSelectedIdx(0); }, [filter]);
@@ -42,9 +49,9 @@ export default memo(function MentionMenu({ filter, agents = [], onSelect, onDism
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const maxH = Math.max(120, Math.min(Math.max(spaceAbove, spaceBelow), 400));
       if (spaceAbove >= spaceBelow) {
-        setStyle({ position: "fixed", bottom: window.innerHeight - rect.top + 2, left: rect.left, width: rect.width, maxHeight: maxH });
+        setStyle({ position: "fixed", bottom: window.innerHeight - rect.top + 2, top: "auto", left: rect.left, right: "auto", width: rect.width, maxHeight: maxH });
       } else {
-        setStyle({ position: "fixed", top: rect.bottom + 2, left: rect.left, width: rect.width, maxHeight: maxH });
+        setStyle({ position: "fixed", top: rect.bottom + 2, bottom: "auto", left: rect.left, right: "auto", width: rect.width, maxHeight: maxH });
       }
     };
     update();
