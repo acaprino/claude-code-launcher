@@ -43,6 +43,7 @@ function AppContent() {
   const fontFamily = settings?.font_family ?? "Cascadia Code";
   const fontSize = settings?.font_size ?? 14;
   const verticalTabs = settings?.vertical_tabs ?? false;
+  const inputStyle = (settings?.input_style ?? "chat") as "chat" | "terminal";
   const sidebarWidth = settings?.sidebar_width ?? 200;
   const appRef = useRef<HTMLDivElement>(null);
   const isResizingRef = useRef(false);
@@ -388,6 +389,7 @@ function AppContent() {
                     onExit={handleExit}
                     onError={handleError}
                     onTaglineChange={handleTaglineChange}
+                    inputStyle={inputStyle}
                     resumeSessionId={tab.resumeSessionId}
                     forkSessionId={tab.forkSessionId}
                   />

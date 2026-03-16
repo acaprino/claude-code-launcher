@@ -28,6 +28,7 @@ interface ChatViewProps {
   onExit: (tabId: string, code: number) => void;
   onError: (tabId: string, msg: string) => void;
   onTaglineChange?: (tabId: string, tagline: string) => void;
+  inputStyle?: "chat" | "terminal";
   resumeSessionId?: string;
   forkSessionId?: string;
 }
@@ -36,7 +37,7 @@ export default memo(function ChatView({
   tabId, projectPath, modelIdx, effortIdx, skipPerms, systemPrompt,
   fontFamily, fontSize, isActive,
   onSessionCreated, onNewOutput, onExit, onError, onTaglineChange,
-  resumeSessionId, forkSessionId,
+  inputStyle = "chat", resumeSessionId, forkSessionId,
 }: ChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputState, setInputState] = useState<"idle" | "awaiting_input" | "processing">("idle");
@@ -382,15 +383,30 @@ export default memo(function ChatView({
               return null;
           }
         })}
+        {/* Terminal mode: input inside scrollable area */}
+        {inputStyle === "terminal" && inputState === "awaiting_input" && (
+          <ChatInput
+            onSubmit={handleSubmit}
+            onCommand={handleCommand}
+            disabled={false}
+            processing={false}
+            isActive={isActive}
+            inputStyle="terminal"
+            droppedFiles={droppedFiles}
+            onDroppedFilesConsumed={() => setDroppedFiles([])}
+          />
+        )}
         <div ref={messagesEndRef} />
       </div>
-      {inputState === "awaiting_input" && (
+      {/* Chat mode: input below scrollable area (fixed) */}
+      {inputStyle !== "terminal" && inputState === "awaiting_input" && (
         <ChatInput
           onSubmit={handleSubmit}
           onCommand={handleCommand}
           disabled={false}
           processing={false}
           isActive={isActive}
+          inputStyle="chat"
           droppedFiles={droppedFiles}
           onDroppedFilesConsumed={() => setDroppedFiles([])}
         />
@@ -402,6 +418,7 @@ export default memo(function ChatView({
           disabled={true}
           processing={true}
           isActive={isActive}
+          inputStyle={inputStyle}
           droppedFiles={droppedFiles}
           onDroppedFilesConsumed={() => setDroppedFiles([])}
         />
