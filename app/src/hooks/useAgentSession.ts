@@ -118,3 +118,14 @@ export async function requestAutocomplete(
 export async function refreshCommands(tabId: string): Promise<{ commands: SlashCommand[]; agents: AgentInfoSDK[] }> {
   return invoke("refresh_commands", { tabId });
 }
+
+export interface CliResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  url: string | null;
+}
+
+export async function runClaudeCommand(subcommand: string): Promise<CliResult> {
+  return invoke<CliResult>("run_claude_command", { subcommand });
+}

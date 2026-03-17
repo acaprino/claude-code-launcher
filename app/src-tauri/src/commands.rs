@@ -1,3 +1,4 @@
+use std::os::windows::process::CommandExt;
 use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::State;
@@ -572,6 +573,102 @@ pub fn read_external_file(path: String) -> Result<String, String> {
     let bytes = std::fs::read(p).map_err(|e| format!("Cannot read file: {e}"))?;
     // Try UTF-8 first, then lossy fallback for Windows-1252 etc.
     Ok(String::from_utf8(bytes.clone()).unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+// ── Claude CLI commands ─────────────────────────────────────────────
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+const CLI_TIMEOUT_SECS: u64 = 30;
+
+/// Find the `claude` CLI executable on the system.
+/// Prefers the known APPDATA/npm location over PATH to avoid PATH-hijack risks.
+fn find_claude_cli() -> Option<String> {
+    // Prefer known safe location first (npm global install)
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let npm_global = std::path::PathBuf::from(&appdata)
+            .join("npm")
+            .join("claude.cmd");
+        if npm_global.exists() {
+            return Some(npm_global.to_string_lossy().to_string());
+        }
+    }
+    // Fall back to PATH (covers scoop, custom installs, etc.)
+    if let Ok(path) = which::which("claude") {
+        return Some(path.to_string_lossy().to_string());
+    }
+    None
+}
+
+#[derive(serde::Serialize)]
+pub struct CliResult {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+    /// URL extracted from output (for /login — auto-open in browser)
+    pub url: Option<String>,
+}
+
+/// Run a Claude CLI subcommand (login, logout, status, doctor).
+#[tauri::command]
+pub async fn run_claude_command(subcommand: String) -> Result<CliResult, String> {
+    // Whitelist allowed subcommands
+    let allowed = ["login", "logout", "status", "doctor"];
+    if !allowed.contains(&subcommand.as_str()) {
+        return Err(format!("Command not allowed: {subcommand}"));
+    }
+
+    let claude_path = find_claude_cli()
+        .ok_or("Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code")?;
+
+    log_info!("run_claude_command: {claude_path} {subcommand}");
+
+    let is_login = subcommand == "login";
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(CLI_TIMEOUT_SECS),
+        tokio::task::spawn_blocking(move || {
+            std::process::Command::new(&claude_path)
+                .arg(&subcommand)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .and_then(|child| child.wait_with_output())
+                .map_err(|e| format!("Failed to run claude {subcommand}: {e}"))
+        }),
+    )
+    .await
+    .map_err(|_| "Claude CLI timed out (30s)".to_string())?
+    .map_err(|e| format!("Task failed: {e}"))??;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    // Extract OAuth URL from login output only (other commands may print unrelated URLs)
+    let url = if is_login {
+        stdout
+            .lines()
+            .chain(stderr.lines())
+            .find_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("https://") {
+                    Some(trimmed.to_string())
+                } else {
+                    None
+                }
+            })
+    } else {
+        None
+    };
+
+    log_info!("run_claude_command: exit={}, url={:?}", output.status.success(), url);
+
+    Ok(CliResult {
+        success: output.status.success(),
+        stdout,
+        stderr,
+        url,
+    })
 }
 
 // ── Marketplace commands ────────────────────────────────────────────

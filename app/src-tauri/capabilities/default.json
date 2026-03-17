@@ -46,6 +46,7 @@
     "allow-refresh-commands",
     "allow-autocomplete-files",
     "allow-read-external-file",
+    "allow-run-claude-command",
     "allow-get-marketplace-plugins",
     "allow-set-marketplace-global"
   ]

@@ -9,9 +9,20 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   const projectsData = useProjects();
 
   // R2: Memoize context value to prevent broadcasting on every render.
-  // Only re-creates the value object when one of the constituent values changes.
+  // Construct a new object so the returned identity is stable when deps are stable.
   const value = useMemo(
-    () => projectsData,
+    () => ({
+      settings: projectsData.settings,
+      projects: projectsData.projects,
+      loading: projectsData.loading,
+      error: projectsData.error,
+      filter: projectsData.filter,
+      setFilter: projectsData.setFilter,
+      updateSettings: projectsData.updateSettings,
+      refresh: projectsData.refresh,
+      recordUsage: projectsData.recordUsage,
+      retry: projectsData.retry,
+    }),
     [
       projectsData.settings,
       projectsData.projects,

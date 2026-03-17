@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import type { ChatMessage } from "../../types";
 
 interface Props {
@@ -12,7 +12,7 @@ function formatTime(ts: number): string {
 }
 
 export default memo(function BookmarkPanel({ messages, onScrollToMessage }: Props) {
-  const userMessages = messages.filter((m) => m.role === "user");
+  const userMessages = useMemo(() => messages.filter((m) => m.role === "user"), [messages]);
 
   if (userMessages.length === 0) {
     return <div className="sidebar-empty">No messages yet</div>;

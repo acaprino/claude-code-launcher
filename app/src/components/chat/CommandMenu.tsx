@@ -16,6 +16,10 @@ const LOCAL_COMMANDS: Command[] = [
   { name: "/theme", description: "Change theme", source: "local" },
   { name: "/sessions", description: "Browse sessions", source: "local" },
   { name: "/help", description: "Show help", source: "local" },
+  { name: "/login", description: "Authenticate with Anthropic", source: "local" },
+  { name: "/logout", description: "Remove credentials", source: "local" },
+  { name: "/status", description: "Show auth & connection status", source: "local" },
+  { name: "/doctor", description: "Diagnose configuration issues", source: "local" },
 ];
 
 const LOCAL_NAMES = new Set(LOCAL_COMMANDS.map((c) => c.name));

@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import type { ChatMessage, TodoItem } from "../../types";
 
 interface Props {
@@ -7,9 +7,11 @@ interface Props {
 
 export default memo(function TodoPanel({ messages }: Props) {
   // Get the most recent todo list from messages
-  const todoMessages = messages.filter((m) => m.role === "todo");
-  const latestTodo = todoMessages[todoMessages.length - 1];
-  const todos: TodoItem[] = latestTodo?.role === "todo" ? latestTodo.todos : [];
+  const todos = useMemo(() => {
+    const todoMessages = messages.filter((m) => m.role === "todo");
+    const latestTodo = todoMessages[todoMessages.length - 1];
+    return (latestTodo?.role === "todo" ? latestTodo.todos : []) as TodoItem[];
+  }, [messages]);
 
   if (todos.length === 0) {
     return <div className="sidebar-empty">No tasks yet</div>;

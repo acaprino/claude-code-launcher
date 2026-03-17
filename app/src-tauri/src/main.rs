@@ -148,6 +148,7 @@ fn main() {
             commands::agent_autocomplete,
             commands::refresh_commands,
             commands::read_external_file,
+            commands::run_claude_command,
             commands::get_marketplace_plugins,
             commands::set_marketplace_global,
             autocomplete::autocomplete_files,

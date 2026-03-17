@@ -181,6 +181,11 @@ description = "Allows reading file content for attachment inlining"
 commands.allow = ["read_external_file"]
 
 [[permission]]
+identifier = "allow-run-claude-command"
+description = "Allows running whitelisted Claude CLI subcommands (login, logout, status, doctor)"
+commands.allow = ["run_claude_command"]
+
+[[permission]]
 identifier = "allow-get-marketplace-plugins"
 description = "Allows getting bundled marketplace plugin paths"
 commands.allow = ["get_marketplace_plugins"]

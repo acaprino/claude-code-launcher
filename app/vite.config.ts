@@ -4,7 +4,11 @@ import react from "@vitejs/plugin-react";
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(async () => ({
-  plugins: [react()],
+  plugins: [react({
+    babel: {
+      plugins: ["babel-plugin-react-compiler"],
+    },
+  })],
   clearScreen: false,
   // R8: Optimize build for Tauri WebView2 (always Chromium-based)
   build: {
@@ -13,6 +17,8 @@ export default defineConfig(async () => ({
       output: {
         manualChunks: {
           "vendor-react": ["react", "react-dom"],
+          "vendor-markdown": ["react-markdown", "remark-gfm"],
+          "vendor-syntax": ["react-syntax-highlighter"],
         },
       },
     },

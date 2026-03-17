@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useCallback } from "react";
+import { memo, useEffect, useMemo, useRef, useCallback } from "react";
 import type { ChatMessage } from "../../types";
 
 interface Props {
@@ -94,9 +94,9 @@ export default memo(function MinimapPanel({ messages, scrollContainerRef }: Prop
     document.addEventListener("mouseup", onUp);
   }, [scrollContainerRef]);
 
-  if (messages.length === 0) return null;
+  const filtered = useMemo(() => messages.filter(m => m.role !== "status"), [messages]);
 
-  const filtered = messages.filter(m => m.role !== "status");
+  if (messages.length === 0) return null;
 
   return (
     <div className="minimap-panel-sublime" ref={minimapRef} onClick={handleClick}>

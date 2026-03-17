@@ -1,5 +1,7 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, respondPermission, refreshCommands } from "../hooks/useAgentSession";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, respondPermission, refreshCommands, runClaudeCommand } from "../hooks/useAgentSession";
+import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { MODELS, EFFORTS } from "../types";
 import type { AgentEvent, Attachment, ChatMessage, PermissionSuggestion, SlashCommand, AgentInfoSDK } from "../types";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -79,10 +81,13 @@ const UserMessage = memo(function UserMessage({ text }: { text: string }) {
 
 const CopyMessageBtn = memo(function CopyMessageBtn({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
   const handleCopy = () => {
     navigator.clipboard.writeText(text);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 1500);
   };
   return (
     <button className="copy-msg-btn" onClick={handleCopy} title="Copy response">
@@ -90,6 +95,51 @@ const CopyMessageBtn = memo(function CopyMessageBtn({ text }: { text: string }) 
     </button>
   );
 });
+
+// ── Session stats reducer ─────────────────────────────────────────
+interface SessionStats {
+  tokens: number;
+  contextWindow: number;
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  turns: number;
+  durationMs: number;
+  rateLimitUtil: number;
+}
+
+const INITIAL_STATS: SessionStats = {
+  tokens: 0, contextWindow: 0, cost: 0,
+  inputTokens: 0, outputTokens: 0,
+  cacheReadTokens: 0, cacheWriteTokens: 0,
+  turns: 0, durationMs: 0, rateLimitUtil: 0,
+};
+
+type StatsAction =
+  | { type: "result"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; turns: number; durationMs: number; contextWindow: number }
+  | { type: "rateLimit"; utilization: number };
+
+function statsReducer(state: SessionStats, action: StatsAction): SessionStats {
+  switch (action.type) {
+    case "result":
+      return {
+        ...state,
+        tokens: state.tokens + (action.inputTokens || 0) + (action.outputTokens || 0),
+        contextWindow: action.contextWindow > 0 ? action.contextWindow : state.contextWindow,
+        cost: state.cost + (action.cost || 0),
+        inputTokens: state.inputTokens + (action.inputTokens || 0),
+        outputTokens: state.outputTokens + (action.outputTokens || 0),
+        cacheReadTokens: state.cacheReadTokens + (action.cacheReadTokens || 0),
+        cacheWriteTokens: state.cacheWriteTokens + (action.cacheWriteTokens || 0),
+        turns: state.turns + (action.turns || 0),
+        durationMs: state.durationMs + (action.durationMs || 0),
+      };
+    case "rateLimit":
+      return { ...state, rateLimitUtil: action.utilization };
+  }
+}
 
 interface ChatViewProps {
   tabId: string;
@@ -123,16 +173,7 @@ export default memo(function ChatView({
   const [droppedFiles, setDroppedFiles] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showMiniInput, setShowMiniInput] = useState(false);
-  const [rateLimitUtil, setRateLimitUtil] = useState(0);
-  const [sessionTokens, setSessionTokens] = useState(0);
-  const [contextWindow, setContextWindow] = useState(0);
-  const [sessionCost, setSessionCost] = useState(0);
-  const [sessionInputTokens, setSessionInputTokens] = useState(0);
-  const [sessionOutputTokens, setSessionOutputTokens] = useState(0);
-  const [sessionCacheReadTokens, setSessionCacheReadTokens] = useState(0);
-  const [sessionCacheWriteTokens, setSessionCacheWriteTokens] = useState(0);
-  const [sessionTurns, setSessionTurns] = useState(0);
-  const [sessionDurationMs, setSessionDurationMs] = useState(0);
+  const [stats, dispatchStats] = useReducer(statsReducer, INITIAL_STATS);
   const [sdkCommands, setSdkCommands] = useState<SlashCommand[]>([]);
   const [sdkAgents, setSdkAgents] = useState<AgentInfoSDK[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -148,6 +189,13 @@ export default memo(function ChatView({
   const idCounterRef = useRef(0);
   const nextId = () => `msg-${tabId}-${++idCounterRef.current}`;
 
+  // Streaming text extraction: keep streaming text in refs to avoid O(n) array copy per chunk.
+  // Only touch messages array on stream start (placeholder) and end (finalize).
+  const streamingTextRef = useRef("");
+  const streamingIdRef = useRef<string | null>(null);
+  const [streamingTick, setStreamingTick] = useState(0);
+  const rafIdRef = useRef(0);
+
   // Callback refs to avoid stale closures in useEffect
   const onSessionCreatedRef = useRef(onSessionCreated);
   onSessionCreatedRef.current = onSessionCreated;
@@ -162,7 +210,7 @@ export default memo(function ChatView({
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
 
-  // Auto-scroll on new messages — only if user is near the bottom
+  // Auto-scroll on new messages or streaming updates — only if user is near the bottom
   const chatContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = chatContainerRef.current;
@@ -171,7 +219,7 @@ export default memo(function ChatView({
     if (nearBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
-  }, [messages]);
+  }, [messages, streamingTick]);
 
   // Track scroll position for terminal mode floating mini-input
   useEffect(() => {
@@ -209,18 +257,17 @@ export default memo(function ChatView({
     const modelId = MODELS[modelIdx]?.id || "";
     const effortId = EFFORTS[effortIdx] || "high";
 
-    // Mutable ref for streaming assistant text accumulation
-    let streamingMsgId: string | null = null;
-    let streamingText = "";
-
-    // Extracted helper: finalize any pending streaming message
+    // Extracted helper: finalize any pending streaming message.
+    // Streaming text lives in component-level refs to avoid O(n) array copies per chunk.
     const finalizeStreaming = () => {
-      if (!streamingMsgId) return;
-      const id = streamingMsgId;
-      const finalText = streamingText;
-      streamingMsgId = null;
-      streamingText = "";
-      setMessages(prev => prev.map(m => m.id === id ? { ...m, text: finalText, streaming: false } as ChatMessage : m));
+      if (!streamingIdRef.current) return;
+      const id = streamingIdRef.current;
+      const text = streamingTextRef.current;
+      streamingIdRef.current = null;
+      streamingTextRef.current = "";
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = 0;
+      setMessages(prev => [...prev, { id, role: "assistant", text, streaming: false, timestamp: Date.now() }]);
     };
 
     const handleAgentEvent = (event: AgentEvent) => {
@@ -228,28 +275,23 @@ export default memo(function ChatView({
 
       if (event.type === "assistant") {
         if (event.streaming) {
-          // Accumulate streaming text into one message
-          if (!streamingMsgId) {
-            streamingMsgId = nextId();
-            streamingText = event.text;
+          // Accumulate streaming text in refs — NO messages array copy per chunk.
+          if (!streamingIdRef.current) {
+            streamingIdRef.current = nextId();
+            streamingTextRef.current = event.text;
           } else {
-            streamingText += event.text;
+            streamingTextRef.current += event.text;
           }
-          const id = streamingMsgId;
-          const text = streamingText;
-          // Streaming message is always the last — update in-place or append
-          setMessages(prev => {
-            const last = prev[prev.length - 1];
-            if (last?.id === id) {
-              const next = [...prev];
-              next[next.length - 1] = { ...last, text, streaming: true } as ChatMessage;
-              return next;
-            }
-            return [...prev, { id, role: "assistant", text, streaming: true, timestamp: Date.now() }];
-          });
+          // RAF-throttle re-renders: coalesce multiple chunks per frame
+          if (!rafIdRef.current) {
+            rafIdRef.current = requestAnimationFrame(() => {
+              rafIdRef.current = 0;
+              setStreamingTick(t => t + 1);
+            });
+          }
         } else {
           // Complete message — finalize streaming or add new
-          if (streamingMsgId) {
+          if (streamingIdRef.current) {
             finalizeStreaming();
           } else {
             setMessages(prev => [...prev, { id: nextId(), role: "assistant", text: event.text, streaming: false, timestamp: Date.now() }]);
@@ -304,17 +346,18 @@ export default memo(function ChatView({
         onTaglineChangeRef.current?.(tabIdRef.current, "Thinking...");
       } else if (event.type === "result") {
         finalizeStreaming();
-        // Accumulate session token count for context bar
-        setSessionTokens(prev => prev + (event.inputTokens || 0) + (event.outputTokens || 0));
-        if (event.contextWindow > 0) setContextWindow(event.contextWindow);
-        // Accumulate session-level stats
-        setSessionCost(prev => prev + (event.cost || 0));
-        setSessionInputTokens(prev => prev + (event.inputTokens || 0));
-        setSessionOutputTokens(prev => prev + (event.outputTokens || 0));
-        setSessionCacheReadTokens(prev => prev + (event.cacheReadTokens || 0));
-        setSessionCacheWriteTokens(prev => prev + (event.cacheWriteTokens || 0));
-        setSessionTurns(prev => prev + (event.turns || 0));
-        setSessionDurationMs(prev => prev + (event.durationMs || 0));
+        // Accumulate session stats in a single dispatch (1 re-render instead of 7+)
+        dispatchStats({
+          type: "result",
+          inputTokens: event.inputTokens || 0,
+          outputTokens: event.outputTokens || 0,
+          cacheReadTokens: event.cacheReadTokens || 0,
+          cacheWriteTokens: event.cacheWriteTokens || 0,
+          cost: event.cost || 0,
+          turns: event.turns || 0,
+          durationMs: event.durationMs || 0,
+          contextWindow: event.contextWindow || 0,
+        });
         // Mark thinking messages as ended (collapsed), add result
         setMessages(prev => [
           ...prev.map(m => m.role === "thinking" && !m.ended ? { ...m, ended: true } as ChatMessage : m),
@@ -345,7 +388,7 @@ export default memo(function ChatView({
           return [...prev, { id: nextId(), role: "todo", todos: event.todos, timestamp: Date.now() }];
         });
       } else if (event.type === "rateLimit") {
-        setRateLimitUtil(event.utilization);
+        dispatchStats({ type: "rateLimit", utilization: event.utilization });
       } else if (event.type === "commandsInit") {
         setSdkCommands(event.commands);
         setSdkAgents(event.agents);
@@ -397,6 +440,11 @@ export default memo(function ChatView({
       cancelled = true;
       // Null out channel handler to prevent stale events from StrictMode's first mount
       if (channelRef) channelRef.onmessage = null;
+      // Clear streaming state
+      streamingIdRef.current = null;
+      streamingTextRef.current = "";
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = 0;
       // Clear commands/agents refresh interval
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
@@ -474,16 +522,6 @@ export default memo(function ChatView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
 
-  // ── Scroll to message (for sidebar navigation) ─────────────────
-  const handleScrollToMessage = useCallback((msgId: string) => {
-    const el = document.getElementById(`msg-${msgId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("msg-highlight");
-      setTimeout(() => el.classList.remove("msg-highlight"), 1000);
-    }
-  }, []);
-
   // ── Keyboard shortcuts ─────────────────────────────────────────
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.ctrlKey && e.key === "c") {
@@ -560,12 +598,50 @@ export default memo(function ChatView({
       case "/sessions":
         window.dispatchEvent(new CustomEvent("anvil:open-sessions"));
         break;
+      case "/login":
+      case "/logout":
+      case "/status":
+      case "/doctor": {
+        const sub = command.name.slice(1); // remove leading /
+        setMessages(prev => [...prev, { id: nextId(), role: "status", status: `Running claude ${sub}...`, model: "", timestamp: Date.now() }]);
+        runClaudeCommand(sub).then(async (result) => {
+          const output = (result.stdout || result.stderr || "").trim();
+          if (output) {
+            setMessages(prev => [...prev, { id: nextId(), role: "status", status: output, model: "", timestamp: Date.now() }]);
+          }
+          // Auto-open browser for login URL
+          if (result.url) {
+            try {
+              await shellOpen(result.url);
+              setMessages(prev => [...prev, { id: nextId(), role: "status", status: "Browser opened for authentication", model: "", timestamp: Date.now() }]);
+            } catch {
+              setMessages(prev => [...prev, { id: nextId(), role: "status", status: `Open this URL: ${result.url}`, model: "", timestamp: Date.now() }]);
+            }
+          }
+          if (!result.success && !output) {
+            setMessages(prev => [...prev, { id: nextId(), role: "error", code: sub, message: `claude ${sub} failed`, timestamp: Date.now() }]);
+          }
+        }).catch((err) => {
+          setMessages(prev => [...prev, { id: nextId(), role: "error", code: sub, message: String(err), timestamp: Date.now() }]);
+        });
+        break;
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
 
   // ── Stable callbacks for ChatInput memo ─────────────────────────
   const handleDroppedFilesConsumed = useCallback(() => setDroppedFiles([]), []);
+
+  const handleAttachClick = useCallback(async () => {
+    try {
+      const result = await open({ multiple: true });
+      if (result) {
+        const paths = Array.isArray(result) ? result : [result];
+        setDroppedFiles(paths);
+      }
+    } catch { /* cancelled */ }
+  }, []);
 
   // ── Derived state (O(1) in render) ────────────────────────────
   const hasUnresolvedPermission = useMemo(
@@ -575,6 +651,35 @@ export default memo(function ChatView({
 
   // ── Deferred messages for sidebar (skip re-renders during streaming)
   const deferredMessages = useDeferredValue(messages);
+
+  // ── Virtualizer for message list ──────────────────────────────
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => chatContainerRef.current,
+    estimateSize: () => 60,
+    overscan: 15,
+    getItemKey: (index) => messages[index].id,
+  });
+
+  // ── Scroll to message (for sidebar navigation) ─────────────────
+  const handleScrollToMessage = useCallback((msgId: string) => {
+    const index = messagesRef.current.findIndex(m => m.id === msgId);
+    if (index < 0) return;
+    virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
+    // Wait for virtualizer to render the target element, then highlight
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`msg-${msgId}`);
+        if (el) {
+          el.classList.add("msg-highlight");
+          setTimeout(() => el.classList.remove("msg-highlight"), 1000);
+        }
+      });
+    });
+  }, [virtualizer]);
 
   // ── Drag & Drop (Tauri native — provides full file paths) ──────
   useEffect(() => {
@@ -622,40 +727,63 @@ export default memo(function ChatView({
       <div className="chat-main-col">
       <div ref={chatContainerRef} className="chat-messages" role="log" aria-live="polite" aria-label="Conversation">
       <div className="chat-messages-inner">
-        {messages.length === 0 && inputState === "idle" && (
+        {messages.length === 0 && !streamingIdRef.current && inputState === "idle" && (
           <div className="chat-msg chat-msg--status">Starting agent...</div>
         )}
-        {messages.map((msg) => {
-          switch (msg.role) {
-            case "user":
-              return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--user"><UserMessage text={msg.text} /></div>;
-            case "assistant":
-              return (
-                <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--assistant">
-                  <MessageBubble text={msg.text} streaming={msg.streaming} />
-                  {!msg.streaming && <CopyMessageBtn text={msg.text} />}
-                </div>
-              );
-            case "tool":
-              return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--tool"><ToolCard tool={msg.tool} input={msg.input} output={msg.output} success={msg.success} /></div>;
-            case "permission":
-              return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--permission"><PermissionCard tool={msg.tool} description={msg.description} suggestions={msg.suggestions} resolved={msg.resolved} allowed={msg.allowed} onRespond={(allow, sugg) => handlePermissionRespond(msg.id, allow, sugg)} /></div>;
-            case "thinking":
-              if (hideThinking) {
-                if (msg.ended) return null;
-                return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--thinking"><div className="thinking-spinner"><span className="thinking-spinner-dot" /><span className="thinking-spinner-label">thinking...</span></div></div>;
+        {/* Virtualized message list */}
+        <div style={{ height: virtualizer.getTotalSize(), width: "100%", position: "relative" }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const msg = messages[virtualRow.index];
+            const content = (() => {
+              switch (msg.role) {
+                case "user":
+                  return <UserMessage text={msg.text} />;
+                case "assistant":
+                  return <><MessageBubble text={msg.text} streaming={msg.streaming} />{!msg.streaming && <CopyMessageBtn text={msg.text} />}</>;
+                case "tool":
+                  return <ToolCard tool={msg.tool} input={msg.input} output={msg.output} success={msg.success} />;
+                case "permission":
+                  return <PermissionCard tool={msg.tool} description={msg.description} suggestions={msg.suggestions} resolved={msg.resolved} allowed={msg.allowed} onRespond={(allow, sugg) => handlePermissionRespond(msg.id, allow, sugg)} />;
+                case "thinking":
+                  if (hideThinking) {
+                    if (msg.ended) return null;
+                    return <div className="thinking-spinner"><span className="thinking-spinner-dot" /><span className="thinking-spinner-label">thinking...</span></div>;
+                  }
+                  return <ThinkingBlock text={msg.text} ended={msg.ended} />;
+                case "result":
+                  return <ResultBar cost={msg.cost} inputTokens={msg.inputTokens} outputTokens={msg.outputTokens} cacheReadTokens={msg.cacheReadTokens} turns={msg.turns} durationMs={msg.durationMs} />;
+                case "error":
+                  return <><strong>error:</strong> {msg.message}</>;
+                case "status":
+                  return <>[{msg.model}] {msg.status}</>;
+                default:
+                  return null;
               }
-              return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--thinking"><ThinkingBlock text={msg.text} ended={msg.ended} /></div>;
-            case "result":
-              return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--result"><ResultBar cost={msg.cost} inputTokens={msg.inputTokens} outputTokens={msg.outputTokens} cacheReadTokens={msg.cacheReadTokens} turns={msg.turns} durationMs={msg.durationMs} /></div>;
-            case "error":
-              return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--error"><strong>error:</strong> {msg.message}</div>;
-            case "status":
-              return <div key={msg.id} id={`msg-${msg.id}`} className="chat-msg chat-msg--status">[{msg.model}] {msg.status}</div>;
-            default:
-              return null;
-          }
-        })}
+            })();
+            if (content === null) return (
+              <div key={msg.id} data-index={virtualRow.index} ref={virtualizer.measureElement}
+                style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)`, height: 0, overflow: "hidden" }} />
+            );
+            return (
+              <div
+                key={msg.id}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                id={`msg-${msg.id}`}
+                className={`chat-msg chat-msg--${msg.role}`}
+                style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {content}
+              </div>
+            );
+          })}
+        </div>
+        {/* Streaming message rendered outside virtual list — avoids O(n) array copy per chunk */}
+        {streamingIdRef.current && (
+          <div className="chat-msg chat-msg--assistant">
+            <MessageBubble text={streamingTextRef.current} streaming={true} />
+          </div>
+        )}
         {/* Terminal mode: input inside scrollable area */}
         {inputStyle === "terminal" && inputState === "awaiting_input" && (
           <ChatInput
@@ -737,42 +865,42 @@ export default memo(function ChatView({
           <span className="chat-bottom-bar-sep">|</span>
           <span className={`chat-bottom-bar-effort ${EFFORTS[effortIdx] || "high"}`}>{EFFORTS[effortIdx] || "high"}</span>
         </div>
-        {sessionCost > 0 && (
+        {stats.cost > 0 && (
           <div className="chat-bottom-bar-stats">
-            <span className="chat-bottom-bar-cost">${sessionCost.toFixed(3)}</span>
+            <span className="chat-bottom-bar-cost">${stats.cost.toFixed(3)}</span>
             <span className="chat-bottom-bar-sep">&middot;</span>
-            <span className="chat-bottom-bar-stat" title={`In: ${fmtBarTokens(sessionInputTokens)} · Out: ${fmtBarTokens(sessionOutputTokens)} · Cache R: ${fmtBarTokens(sessionCacheReadTokens)} · Cache W: ${fmtBarTokens(sessionCacheWriteTokens)}`}>
-              {fmtBarTokens(sessionInputTokens + sessionOutputTokens + sessionCacheReadTokens + sessionCacheWriteTokens)} tok
+            <span className="chat-bottom-bar-stat" title={`In: ${fmtBarTokens(stats.inputTokens)} · Out: ${fmtBarTokens(stats.outputTokens)} · Cache R: ${fmtBarTokens(stats.cacheReadTokens)} · Cache W: ${fmtBarTokens(stats.cacheWriteTokens)}`}>
+              {fmtBarTokens(stats.inputTokens + stats.outputTokens + stats.cacheReadTokens + stats.cacheWriteTokens)} tok
             </span>
             <span className="chat-bottom-bar-sep">&middot;</span>
-            <span className="chat-bottom-bar-stat">{sessionTurns} turn{sessionTurns !== 1 ? "s" : ""}</span>
+            <span className="chat-bottom-bar-stat">{stats.turns} turn{stats.turns !== 1 ? "s" : ""}</span>
             <span className="chat-bottom-bar-sep">&middot;</span>
-            <span className="chat-bottom-bar-stat">{(sessionDurationMs / 1000).toFixed(0)}s</span>
+            <span className="chat-bottom-bar-stat">{(stats.durationMs / 1000).toFixed(0)}s</span>
           </div>
         )}
         <div className="chat-bottom-bar-meters">
-          {sessionTokens > 0 && contextWindow > 0 && (
-            <div className="chat-usage-bar" title={`Context: ${(sessionTokens / 1000).toFixed(0)}k / ${(contextWindow / 1000).toFixed(0)}k tokens`}>
+          {stats.tokens > 0 && stats.contextWindow > 0 && (
+            <div className="chat-usage-bar" title={`Context: ${(stats.tokens / 1000).toFixed(0)}k / ${(stats.contextWindow / 1000).toFixed(0)}k tokens`}>
               <span className="chat-usage-bar-label">context</span>
               <div className="chat-usage-bar-track">
                 <div
-                  className={`chat-usage-bar-fill${sessionTokens / contextWindow > 0.8 ? " warn" : ""}`}
-                  style={{ width: `${Math.min((sessionTokens / contextWindow) * 100, 100)}%` }}
+                  className={`chat-usage-bar-fill${stats.tokens / stats.contextWindow > 0.8 ? " warn" : ""}`}
+                  style={{ width: `${Math.min((stats.tokens / stats.contextWindow) * 100, 100)}%` }}
                 />
               </div>
-              <span className="chat-usage-bar-pct">{Math.round((sessionTokens / contextWindow) * 100)}%</span>
+              <span className="chat-usage-bar-pct">{Math.round((stats.tokens / stats.contextWindow) * 100)}%</span>
             </div>
           )}
-          {rateLimitUtil > 0 && (
-            <div className="chat-usage-bar" title={`Rate limit: ${Math.round(rateLimitUtil * 100)}%`}>
+          {stats.rateLimitUtil > 0 && (
+            <div className="chat-usage-bar" title={`Rate limit: ${Math.round(stats.rateLimitUtil * 100)}%`}>
               <span className="chat-usage-bar-label">quota</span>
               <div className="chat-usage-bar-track">
                 <div
-                  className={`chat-usage-bar-fill${rateLimitUtil > 0.8 ? " warn" : ""}`}
-                  style={{ width: `${Math.min(rateLimitUtil * 100, 100)}%` }}
+                  className={`chat-usage-bar-fill${stats.rateLimitUtil > 0.8 ? " warn" : ""}`}
+                  style={{ width: `${Math.min(stats.rateLimitUtil * 100, 100)}%` }}
                 />
               </div>
-              <span className="chat-usage-bar-pct">{Math.round(rateLimitUtil * 100)}%</span>
+              <span className="chat-usage-bar-pct">{Math.round(stats.rateLimitUtil * 100)}%</span>
             </div>
           )}
         </div>
@@ -781,15 +909,7 @@ export default memo(function ChatView({
             className="chat-bottom-bar-attach"
             title="Attach files"
             aria-label="Attach files"
-            onClick={async () => {
-              try {
-                const result = await open({ multiple: true });
-                if (result) {
-                  const paths = Array.isArray(result) ? result : [result];
-                  setDroppedFiles(paths);
-                }
-              } catch { /* cancelled */ }
-            }}
+            onClick={handleAttachClick}
           >
             +
           </button>

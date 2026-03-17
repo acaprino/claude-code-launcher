@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo, useRef, useState } from "react";
+import { useEffect, useCallback, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SystemPrompt } from "./types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -9,15 +9,17 @@ import TitleBar from "./components/TitleBar";
 import TabSidebar from "./components/TabSidebar";
 import ChatView from "./components/ChatView";
 import NewTabPage from "./components/NewTabPage";
-import AboutPage from "./components/AboutPage";
-import UsagePage from "./components/UsagePage";
-import SystemPromptPage from "./components/SystemPromptPage";
-import SessionBrowser from "./components/SessionBrowser";
-import SessionPanel from "./components/SessionPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ShortcutsOverlay from "./components/ShortcutsOverlay";
 import "./components/ShortcutsOverlay.css";
 import "./App.css";
+
+// Lazy-load singleton tab pages (rarely opened, reduces initial parse time)
+const AboutPage = lazy(() => import("./components/AboutPage"));
+const UsagePage = lazy(() => import("./components/UsagePage"));
+const SystemPromptPage = lazy(() => import("./components/SystemPromptPage"));
+const SessionBrowser = lazy(() => import("./components/SessionBrowser"));
+const SessionPanel = lazy(() => import("./components/SessionPanel"));
 
 // R13: Cache window reference at module level (always same window in Tauri)
 const appWindow = getCurrentWindow();
@@ -302,13 +304,15 @@ function AppContent() {
             onResizing={setIsResizing}
           />
           {sessionPanelOpen && (
-            <SessionPanel
-              projectPath={activeProjectPath}
-              isOpen={sessionPanelOpen}
-              onClose={toggleSessionPanel}
-              onResumeSession={handleResumeSession}
-              onForkSession={handleForkSession}
-            />
+            <Suspense fallback={null}>
+              <SessionPanel
+                projectPath={activeProjectPath}
+                isOpen={sessionPanelOpen}
+                onClose={toggleSessionPanel}
+                onResumeSession={handleResumeSession}
+                onForkSession={handleForkSession}
+              />
+            </Suspense>
           )}
         </>
       ) : (
@@ -325,13 +329,15 @@ function AppContent() {
             onToggleSessions={toggleSessionPanel}
           />
           {sessionPanelOpen && (
-            <SessionPanel
-              projectPath={activeProjectPath}
-              isOpen={sessionPanelOpen}
-              onClose={toggleSessionPanel}
-              onResumeSession={handleResumeSession}
-              onForkSession={handleForkSession}
-            />
+            <Suspense fallback={null}>
+              <SessionPanel
+                projectPath={activeProjectPath}
+                isOpen={sessionPanelOpen}
+                onClose={toggleSessionPanel}
+                onResumeSession={handleResumeSession}
+                onForkSession={handleForkSession}
+              />
+            </Suspense>
           )}
         </>
       )}
@@ -357,43 +363,51 @@ function AppContent() {
                 </ErrorBoundary>
               ) : tab.type === "about" ? (
                 <ErrorBoundary tabId={tab.id} onClose={closeTab}>
-                  <AboutPage
-                    tabId={tab.id}
-                    onRequestClose={closeTab}
-                    isActive={isActive}
-                  />
+                  <Suspense fallback={null}>
+                    <AboutPage
+                      tabId={tab.id}
+                      onRequestClose={closeTab}
+                      isActive={isActive}
+                    />
+                  </Suspense>
                 </ErrorBoundary>
               ) : tab.type === "usage" ? (
                 <ErrorBoundary tabId={tab.id} onClose={closeTab}>
-                  <UsagePage
-                    tabId={tab.id}
-                    onRequestClose={closeTab}
-                    isActive={isActive}
-                  />
+                  <Suspense fallback={null}>
+                    <UsagePage
+                      tabId={tab.id}
+                      onRequestClose={closeTab}
+                      isActive={isActive}
+                    />
+                  </Suspense>
                 </ErrorBoundary>
               ) : tab.type === "system-prompt" ? (
                 <ErrorBoundary tabId={tab.id} onClose={closeTab}>
-                  <SystemPromptPage
-                    tabId={tab.id}
-                    onRequestClose={closeTab}
-                    isActive={isActive}
-                    prompts={allPrompts}
-                    onPromptsChanged={reloadPrompts}
-                  />
+                  <Suspense fallback={null}>
+                    <SystemPromptPage
+                      tabId={tab.id}
+                      onRequestClose={closeTab}
+                      isActive={isActive}
+                      prompts={allPrompts}
+                      onPromptsChanged={reloadPrompts}
+                    />
+                  </Suspense>
                 </ErrorBoundary>
               ) : tab.type === "sessions" ? (
                 <ErrorBoundary tabId={tab.id} onClose={closeTab}>
-                  <SessionBrowser
-                    tabId={tab.id}
-                    isActive={isActive}
-                    onRequestClose={closeTab}
-                    onResumeSession={(sessionId, cwd) => handleResumeSession(sessionId, cwd)}
-                    onForkSession={(sessionId, cwd) => handleForkSession(sessionId, cwd)}
-                    onViewSession={(sessionId) => {
-                      // TODO: view session transcript
-                      console.log("View session", sessionId);
-                    }}
-                  />
+                  <Suspense fallback={null}>
+                    <SessionBrowser
+                      tabId={tab.id}
+                      isActive={isActive}
+                      onRequestClose={closeTab}
+                      onResumeSession={(sessionId, cwd) => handleResumeSession(sessionId, cwd)}
+                      onForkSession={(sessionId, cwd) => handleForkSession(sessionId, cwd)}
+                      onViewSession={(sessionId) => {
+                        // TODO: view session transcript
+                        console.log("View session", sessionId);
+                      }}
+                    />
+                  </Suspense>
                 </ErrorBoundary>
               ) : tab.type === "agent" ? (
                 <ErrorBoundary tabId={tab.id} onClose={closeTab}>

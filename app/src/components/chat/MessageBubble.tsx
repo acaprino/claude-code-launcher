@@ -1,7 +1,58 @@
-import { memo, useState } from "react";
+import { memo, useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
+import langBash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import langCss from "react-syntax-highlighter/dist/esm/languages/prism/css";
+import langDiff from "react-syntax-highlighter/dist/esm/languages/prism/diff";
+import langGo from "react-syntax-highlighter/dist/esm/languages/prism/go";
+import langGraphql from "react-syntax-highlighter/dist/esm/languages/prism/graphql";
+import langJava from "react-syntax-highlighter/dist/esm/languages/prism/java";
+import langJavascript from "react-syntax-highlighter/dist/esm/languages/prism/javascript";
+import langJson from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import langJsx from "react-syntax-highlighter/dist/esm/languages/prism/jsx";
+import langKotlin from "react-syntax-highlighter/dist/esm/languages/prism/kotlin";
+import langLua from "react-syntax-highlighter/dist/esm/languages/prism/lua";
+import langMarkdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown";
+import langPowershell from "react-syntax-highlighter/dist/esm/languages/prism/powershell";
+import langPython from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import langRuby from "react-syntax-highlighter/dist/esm/languages/prism/ruby";
+import langRust from "react-syntax-highlighter/dist/esm/languages/prism/rust";
+import langSql from "react-syntax-highlighter/dist/esm/languages/prism/sql";
+import langToml from "react-syntax-highlighter/dist/esm/languages/prism/toml";
+import langTsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
+import langTypescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import langYaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
+
+SyntaxHighlighter.registerLanguage("bash", langBash);
+SyntaxHighlighter.registerLanguage("shell", langBash);
+SyntaxHighlighter.registerLanguage("sh", langBash);
+SyntaxHighlighter.registerLanguage("css", langCss);
+SyntaxHighlighter.registerLanguage("diff", langDiff);
+SyntaxHighlighter.registerLanguage("go", langGo);
+SyntaxHighlighter.registerLanguage("graphql", langGraphql);
+SyntaxHighlighter.registerLanguage("java", langJava);
+SyntaxHighlighter.registerLanguage("javascript", langJavascript);
+SyntaxHighlighter.registerLanguage("js", langJavascript);
+SyntaxHighlighter.registerLanguage("json", langJson);
+SyntaxHighlighter.registerLanguage("jsx", langJsx);
+SyntaxHighlighter.registerLanguage("kotlin", langKotlin);
+SyntaxHighlighter.registerLanguage("lua", langLua);
+SyntaxHighlighter.registerLanguage("markdown", langMarkdown);
+SyntaxHighlighter.registerLanguage("md", langMarkdown);
+SyntaxHighlighter.registerLanguage("powershell", langPowershell);
+SyntaxHighlighter.registerLanguage("python", langPython);
+SyntaxHighlighter.registerLanguage("py", langPython);
+SyntaxHighlighter.registerLanguage("ruby", langRuby);
+SyntaxHighlighter.registerLanguage("rust", langRust);
+SyntaxHighlighter.registerLanguage("rs", langRust);
+SyntaxHighlighter.registerLanguage("sql", langSql);
+SyntaxHighlighter.registerLanguage("toml", langToml);
+SyntaxHighlighter.registerLanguage("tsx", langTsx);
+SyntaxHighlighter.registerLanguage("typescript", langTypescript);
+SyntaxHighlighter.registerLanguage("ts", langTypescript);
+SyntaxHighlighter.registerLanguage("yaml", langYaml);
+SyntaxHighlighter.registerLanguage("yml", langYaml);
 
 /** Build a syntax theme from CSS custom properties (read at render time). */
 function getAnvilTheme(): Record<string, React.CSSProperties> {
@@ -68,10 +119,13 @@ const CodeBlock = ({ className, children }: { className?: string; children?: Rea
     return <code className={className}>{children}</code>;
   }
 
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 1500);
   };
 
   return (
@@ -100,6 +154,9 @@ const CodeBlock = ({ className, children }: { className?: string; children?: Rea
   );
 };
 
+const MD_PLUGINS = [remarkGfm];
+const MD_COMPONENTS = { a: SafeLink, code: CodeBlock as never };
+
 export default memo(function MessageBubble({ text, streaming }: Props) {
   return (
     <div className={`msg-bubble${streaming ? " streaming" : ""}`}>
@@ -107,13 +164,7 @@ export default memo(function MessageBubble({ text, streaming }: Props) {
         // Raw text during streaming — avoids O(n^2) markdown re-parsing per chunk
         <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>
       ) : (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            a: SafeLink,
-            code: CodeBlock as never,
-          }}
-        >
+        <ReactMarkdown remarkPlugins={MD_PLUGINS} components={MD_COMPONENTS}>
           {text}
         </ReactMarkdown>
       )}
