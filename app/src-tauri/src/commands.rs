@@ -464,6 +464,19 @@ pub fn agent_permission(
 }
 
 #[tauri::command]
+pub fn agent_ask_response(
+    sidecar: State<'_, Arc<SidecarManager>>,
+    tab_id: String,
+    answers: serde_json::Value,
+) -> Result<(), String> {
+    sidecar.send_command(&serde_json::json!({
+        "cmd": "ask_user_response",
+        "tabId": tab_id,
+        "answers": answers,
+    }))
+}
+
+#[tauri::command]
 pub fn agent_set_model(
     sidecar: State<'_, Arc<SidecarManager>>,
     tab_id: String,

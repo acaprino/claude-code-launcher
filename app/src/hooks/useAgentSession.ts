@@ -90,6 +90,10 @@ export async function respondPermission(tabId: string, allow: boolean, updatedPe
   await invoke("agent_permission", { tabId, allow, updatedPermissions: updatedPermissions || null });
 }
 
+export async function respondAskUser(tabId: string, answers: Record<string, string>): Promise<void> {
+  await invoke("agent_ask_response", { tabId, answers });
+}
+
 export async function setAgentModel(tabId: string, model: string): Promise<void> {
   await invoke("agent_set_model", { tabId, model });
 }

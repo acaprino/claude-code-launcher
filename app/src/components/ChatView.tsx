@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, respondPermission, refreshCommands, runClaudeCommand } from "../hooks/useAgentSession";
+import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, respondPermission, respondAskUser, refreshCommands, runClaudeCommand } from "../hooks/useAgentSession";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { MODELS, EFFORTS } from "../types";
 import type { AgentEvent, AgentTask, Attachment, ChatMessage, PermissionSuggestion, SlashCommand, AgentInfoSDK } from "../types";
@@ -14,6 +14,7 @@ import type { Command } from "./chat/CommandMenu";
 import MessageBubble from "./chat/MessageBubble";
 import ToolCard from "./chat/ToolCard";
 import PermissionCard from "./chat/PermissionCard";
+import AskQuestionCard from "./chat/AskQuestionCard";
 import ThinkingBlock from "./chat/ThinkingBlock";
 import ResultBar from "./chat/ResultBar";
 import ErrorCard from "./chat/ErrorCard";
@@ -326,6 +327,16 @@ export default memo(function ChatView({
         }]);
         setInputState("processing"); // Block input during permission
         onTaglineChangeRef.current?.(tabIdRef.current, `Permission: ${event.tool}`);
+      } else if (event.type === "ask") {
+        finalizeStreaming();
+        setMessages(prev => [...prev, {
+          id: nextId(), role: "ask", questions: event.questions,
+          timestamp: Date.now(),
+        }]);
+        setInputState("processing");
+        onTaglineChangeRef.current?.(tabIdRef.current, "Question");
+        // Auto-scroll so the interactive card is visible
+        queueMicrotask(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }));
       } else if (event.type === "inputRequired") {
         finalizeStreaming();
         setInputState("awaiting_input");
@@ -574,6 +585,18 @@ export default memo(function ChatView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
 
+  // ── AskUserQuestion response ────────────────────────────────────
+  const handleAskUserRespond = useCallback((msgId: string, answers: Record<string, string>) => {
+    if (respondedIdsRef.current.has(msgId)) return;
+    respondedIdsRef.current.add(msgId);
+    setMessages(prev => prev.map(m =>
+      m.id === msgId && m.role === "ask" ? { ...m, resolved: true, answers } : m
+    ));
+    respondAskUser(tabId, answers).catch((err) => {
+      setMessages(prev => [...prev, { id: nextId(), role: "error", code: "ask_user", message: String(err), timestamp: Date.now() }]);
+    });
+  }, [tabId]);
+
   // ── Keyboard shortcuts ─────────────────────────────────────────
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.ctrlKey && e.key === "c") {
@@ -697,7 +720,7 @@ export default memo(function ChatView({
 
   // ── Derived state (O(1) in render) ────────────────────────────
   const hasUnresolvedPermission = useMemo(
-    () => messages.some(m => m.role === "permission" && !m.resolved),
+    () => messages.some(m => (m.role === "permission" || m.role === "ask") && !m.resolved),
     [messages],
   );
 
@@ -796,6 +819,8 @@ export default memo(function ChatView({
                   return <ToolCard tool={msg.tool} input={msg.input} output={msg.output} success={msg.success} />;
                 case "permission":
                   return <PermissionCard tool={msg.tool} description={msg.description} suggestions={msg.suggestions} resolved={msg.resolved} allowed={msg.allowed} onRespond={(allow, sugg) => handlePermissionRespond(msg.id, allow, sugg)} />;
+                case "ask":
+                  return <AskQuestionCard questions={msg.questions} resolved={msg.resolved} answers={msg.answers} onRespond={(answers) => handleAskUserRespond(msg.id, answers)} />;
                 case "thinking":
                   if (hideThinking) {
                     if (msg.ended) return null;

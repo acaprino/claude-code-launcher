@@ -142,6 +142,7 @@ fn main() {
             commands::agent_fork,
             commands::agent_kill,
             commands::agent_permission,
+            commands::agent_ask_response,
             commands::agent_set_model,
             commands::list_agent_sessions,
             commands::get_agent_messages,

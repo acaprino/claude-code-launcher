@@ -429,6 +429,195 @@
 .perm-btn--no { border-color: var(--red); color: var(--red); }
 .perm-btn--no:hover { background: color-mix(in srgb, var(--red) 10%, transparent); }
 
+/* ── AskQuestionCard: terminal-style interactive wizard ───────────── */
+.ask-card {
+  border-radius: 0;
+  padding: 2px 0;
+  font-size: var(--text-sm);
+}
+
+.ask-card.pending {
+  background: none;
+  border: none;
+  outline: none;
+}
+
+/* ── Resolved state ── */
+.ask-card.resolved {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  opacity: 0.45;
+  font-size: var(--text-sm);
+}
+.ask-card.resolved .ask-card-icon { color: var(--green); }
+.ask-card.resolved .ask-card-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.ask-card-answer { display: inline-flex; gap: var(--space-1); }
+.ask-card-answer-header {
+  color: var(--accent);
+  font-weight: 600;
+}
+.ask-card-answer-header::after { content: ":"; }
+.ask-card-answer-value { color: var(--text-dim); }
+.ask-card-answer-sep {
+  color: var(--overlay0);
+  margin: 0 var(--space-1);
+}
+
+/* ── Horizontal step tabs ── */
+.ask-card-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+.ask-card-tabs-arrow {
+  color: var(--overlay0);
+  padding: 0 var(--space-1);
+  user-select: none;
+}
+.ask-card-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  line-height: 1.8;
+  transition: color 0.1s, border-color 0.1s;
+}
+.ask-card-tab:hover {
+  color: var(--text);
+}
+.ask-card-tab.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ask-card-tab.done .ask-card-tab-check {
+  color: var(--green);
+}
+.ask-card-tab-check {
+  color: var(--overlay0);
+}
+
+/* ── Question text ── */
+.ask-card-question {
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+/* ── Options list ── */
+.ask-card-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: var(--space-2);
+}
+.ask-card-option {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 1px 0;
+  cursor: pointer;
+  line-height: 1.6;
+  transition: background 0.1s;
+}
+.ask-card-option:hover {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.ask-card-option.focused {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.ask-card-option.focused .ask-card-option-label {
+  color: var(--text);
+}
+.ask-card-option.selected .ask-card-option-check {
+  color: var(--green);
+}
+.ask-card-option-cursor {
+  color: var(--accent);
+  width: 1.2em;
+  text-align: center;
+  flex-shrink: 0;
+  user-select: none;
+}
+.ask-card-option-num {
+  color: var(--overlay1);
+  width: 1.8em;
+  text-align: right;
+  flex-shrink: 0;
+  user-select: none;
+}
+.ask-card-option-check {
+  color: var(--overlay0);
+  flex-shrink: 0;
+  user-select: none;
+}
+.ask-card-option-label {
+  color: var(--text-dim);
+}
+.ask-card-option-desc {
+  color: var(--overlay1);
+  margin-left: var(--space-1);
+  font-size: var(--text-xs);
+}
+.ask-card-option-desc::before { content: "\2014 "; }
+
+/* ── Custom text input ── */
+.ask-card-custom-input {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--accent);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  padding: 0 var(--space-1);
+  outline: none;
+  flex: 1;
+  min-width: 120px;
+  caret-color: var(--accent);
+}
+.ask-card-custom-input::placeholder {
+  color: var(--overlay0);
+}
+
+/* ── Navigation action ── */
+.ask-card-nav {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  padding-left: 3em;
+}
+.ask-card-nav-action {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  user-select: none;
+}
+.ask-card-nav-action:hover {
+  text-decoration: underline;
+}
+
+/* ── Keyboard hints ── */
+.ask-card-hints {
+  color: var(--overlay0);
+  font-size: var(--text-xs);
+  user-select: none;
+}
+
 /* ── ThinkingBlock: dim italic, no border ────────────────────────── */
 .thinking-block {
   background: none;

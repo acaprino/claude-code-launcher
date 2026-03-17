@@ -7,8 +7,12 @@ import { createInterface } from "readline";
 import { readFileSync } from "fs";
 import { join } from "path";
 
-// Active sessions: tabId → { query, abortController, inputQueue, inputResolve }
+// Active sessions: tabId → { query, abortController, inputQueue, inputResolve, pendingAskUser }
 const sessions = new Map();
+
+// Timeout constants (ms)
+const PERMISSION_TIMEOUT_MS = 300_000; // 5 minutes
+const ASK_USER_TIMEOUT_MS = 600_000;   // 10 minutes — multi-step wizard needs more time
 
 // Emit a JSON-line event to stdout
 function emit(evt) {
@@ -109,7 +113,7 @@ async function handleCreate(cmd) {
             session.pendingPermission = null;
             resolve({ behavior: "deny", message: "Permission request timed out" });
           }
-        }, 300_000);
+        }, PERMISSION_TIMEOUT_MS);
         session.pendingPermission = {
           resolve: (val) => { clearTimeout(timeout); resolve(val); },
           toolUseId: opts.toolUseID,
@@ -127,6 +131,61 @@ async function handleCreate(cmd) {
     options.plugins = plugins.map(p => ({ type: 'local', path: p }));
   }
 
+  // Intercept AskUserQuestion tool to route to Anvil UI
+  options.hooks = {
+    ...(options.hooks || {}),
+    PreToolUse: [
+      ...(options.hooks?.PreToolUse || []),
+      {
+        matcher: /^AskUserQuestion$/,
+        hooks: [async (event) => {
+          const session = sessions.get(tabId);
+          if (!session) return { behavior: "allow" };
+
+          // Extract questions from the tool input
+          const questions = event.input?.questions;
+          if (!Array.isArray(questions) || questions.length === 0) {
+            return { behavior: "allow" };
+          }
+
+          // Emit ask_user event to frontend
+          emit({
+            evt: "ask_user",
+            tabId,
+            questions: questions.map(q => ({
+              question: q.question || "",
+              header: q.header || "",
+              options: (q.options || []).map(o => ({
+                label: o.label || "",
+                description: o.description || "",
+                preview: o.preview || undefined,
+              })),
+              multiSelect: !!q.multiSelect,
+            })),
+          });
+
+          // Wait for user response from frontend (timeout 10 minutes — longer than
+          // permission's 5 min because multi-step wizard takes more time)
+          const askId = Date.now() + Math.random();
+          const result = await new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+              if (session.pendingAskUser?.askId === askId) {
+                session.pendingAskUser = null;
+                resolve({ behavior: "deny", message: "AskUserQuestion timed out — no user response" });
+              }
+            }, ASK_USER_TIMEOUT_MS);
+            session.pendingAskUser = {
+              resolve: (val) => { clearTimeout(timeout); resolve(val); },
+              questions,
+              askId,
+            };
+          });
+          return result;
+        }],
+      },
+    ],
+  };
+
   // Resume or fork if specified
   if (cmd.sessionId) {
     if (cmd.fork) {
@@ -141,6 +200,7 @@ async function handleCreate(cmd) {
     abortController,
     inputQueue,
     pendingPermission: null,
+    pendingAskUser: null,
   };
 
   // Start the query
@@ -411,6 +471,11 @@ function handleKill(cmd, silent = false) {
     session.pendingPermission.resolve({ behavior: "deny", message: "Session killed" });
     session.pendingPermission = null;
   }
+  // Resolve any pending AskUserQuestion
+  if (session.pendingAskUser) {
+    session.pendingAskUser.resolve({ behavior: "allow" });
+    session.pendingAskUser = null;
+  }
 
   session.query?.close();
   sessions.delete(cmd.tabId);
@@ -439,6 +504,33 @@ function handlePermissionResponse(cmd) {
   } else {
     resolve({ behavior: "deny", message: "Denied by user" });
   }
+}
+
+function handleAskUserResponse(cmd) {
+  const session = sessions.get(cmd.tabId);
+  if (!session?.pendingAskUser) {
+    log(`No pending AskUserQuestion for tab ${cmd.tabId}`);
+    return;
+  }
+
+  const { resolve, questions } = session.pendingAskUser;
+  session.pendingAskUser = null;
+
+  const answers = cmd.answers || {};
+
+  // Format the answers as a human-readable summary for Claude
+  const answerLines = questions.map((q, i) => {
+    const answer = (answers[String(i)] || "(no answer)").replace(/[\r\n]/g, " ");
+    const header = (q.header || "").replace(/[\r\n]/g, " ");
+    return `${header}: ${answer}`;
+  });
+
+  // Deny the tool (prevents SDK from trying TUI rendering) and inject a system message
+  // with the user's answers so Claude sees them as if the tool succeeded.
+  resolve({
+    behavior: "deny",
+    message: `User answered the questions via Anvil UI:\n${answerLines.join("\n")}`,
+  });
 }
 
 async function handleSetModel(cmd) {
@@ -705,6 +797,9 @@ rl.on("line", async (line) => {
         break;
       case "permission_response":
         handlePermissionResponse(cmd);
+        break;
+      case "ask_user_response":
+        handleAskUserResponse(cmd);
         break;
       case "set_model":
         await handleSetModel(cmd);

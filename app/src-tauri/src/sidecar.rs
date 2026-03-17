@@ -21,6 +21,7 @@ pub enum AgentEvent {
     ToolUse { tool: String, input: serde_json::Value },
     ToolResult { tool: String, output: String, success: bool },
     Permission { tool: String, description: String, tool_use_id: String, suggestions: serde_json::Value },
+    Ask { questions: serde_json::Value },
     InputRequired {},
     Thinking { text: String },
     Status { status: String, model: String, session_id: String },
@@ -72,6 +73,9 @@ struct SidecarEvent {
     description: String,
     #[serde(default)]
     permission_suggestions: Option<serde_json::Value>,
+    // For ask_user events
+    #[serde(default)]
+    questions: Option<serde_json::Value>,
     #[serde(default)]
     tool_use_id: String,
     #[serde(default)]
@@ -361,6 +365,7 @@ impl SidecarManager {
                         "tool_use" => AgentEvent::ToolUse { tool: event.tool, input: event.input.unwrap_or(serde_json::Value::Null) },
                         "tool_result" => AgentEvent::ToolResult { tool: event.tool, output: event.output, success: event.success },
                         "permission" => AgentEvent::Permission { tool: event.tool, description: event.description, tool_use_id: event.tool_use_id, suggestions: event.permission_suggestions.unwrap_or(serde_json::Value::Array(vec![])) },
+                        "ask_user" => AgentEvent::Ask { questions: event.questions.unwrap_or(serde_json::Value::Array(vec![])) },
                         "input_required" => AgentEvent::InputRequired {},
                         "thinking" => AgentEvent::Thinking { text: event.text },
                         "status" => AgentEvent::Status { status: event.status, model: event.model, session_id: event.session_id },

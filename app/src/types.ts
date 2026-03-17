@@ -151,11 +151,20 @@ export interface AgentInfoSDK {
   model?: string;
 }
 
+/** A single question in an AskUserQuestion tool call */
+export interface AskQuestionItem {
+  question: string;
+  header: string;
+  options: { label: string; description: string; preview?: string }[];
+  multiSelect: boolean;
+}
+
 export type AgentEvent =
   | { type: "assistant"; text: string; streaming: boolean }
   | { type: "toolUse"; tool: string; input: unknown }
   | { type: "toolResult"; tool: string; output: string; success: boolean }
   | { type: "permission"; tool: string; description: string; toolUseId: string; suggestions?: PermissionSuggestion[] }
+  | { type: "ask"; questions: AskQuestionItem[] }
   | { type: "inputRequired" }
   | { type: "thinking"; text: string }
   | { type: "status"; status: string; model: string; sessionId: string }
@@ -179,6 +188,7 @@ export type ChatMessage =
   | { id: string; role: "assistant"; text: string; streaming: boolean; timestamp: number }
   | { id: string; role: "tool"; tool: string; input: unknown; output?: string; success?: boolean; timestamp: number }
   | { id: string; role: "permission"; tool: string; description: string; suggestions?: PermissionSuggestion[]; resolved?: boolean; allowed?: boolean; timestamp: number }
+  | { id: string; role: "ask"; questions: AskQuestionItem[]; resolved?: boolean; answers?: Record<string, string>; timestamp: number }
   | { id: string; role: "thinking"; text: string; ended?: boolean; timestamp: number }
   | { id: string; role: "result"; cost: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; turns: number; durationMs: number; isError: boolean; sessionId: string; contextWindow: number; timestamp: number }
   | { id: string; role: "error"; code: string; message: string; timestamp: number }
