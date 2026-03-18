@@ -26,11 +26,11 @@
   --hover-overlay-subtle: color-mix(in srgb, var(--text) 5%, transparent);
   --z-resize: 100;
   --z-modal: 1000;
-  --text-2xs: 9px;
-  --text-xs: 10px;
-  --text-sm: 11px;
-  --text-base: 13px;
-  --text-md: 14px;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
   --text-lg: 16px;
   --text-xl: 18px;
   --font-mono: "Cascadia Code", "JetBrains Mono", "Fira Code", "Consolas", monospace;

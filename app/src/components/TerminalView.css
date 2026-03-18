@@ -1,6 +1,6 @@
 /* ── TerminalView — Warp/Fig-style compact terminal ──────────────── */
 .terminal-view {
-  --tv-font-size: 13px;
+  --tv-font-size: var(--text-base);
   --tv-line-height: 1.5;
   --tv-block-gap: 8px;
   --tv-indent: var(--space-4);

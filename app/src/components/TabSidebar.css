@@ -19,12 +19,12 @@
 
 .tab-sidebar__add {
   flex: 1;
-  height: 28px;
+  height: 32px;
   border-radius: var(--radius-sm);
   border: 1px dashed color-mix(in srgb, var(--overlay1) 40%, transparent);
   background: transparent;
   color: var(--text-dim);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   cursor: pointer;
   display: flex;
   align-items: center;

@@ -6,6 +6,7 @@ export function applyTheme(themeIdx: number): void {
   const c = theme.colors;
   const root = document.documentElement;
 
+  // Colors
   root.style.setProperty("--bg", c.bg);
   root.style.setProperty("--surface", c.surface);
   root.style.setProperty("--mantle", c.mantle);
@@ -25,11 +26,16 @@ export function applyTheme(themeIdx: number): void {
   } else {
     root.style.removeProperty("--font-mono");
   }
-  if (theme.termFontSize) {
-    root.style.setProperty("--text-base", `${theme.termFontSize}px`);
-  } else {
-    root.style.removeProperty("--text-base");
-  }
+
+  // Typographic scale — derived from termFontSize (default 14)
+  const base = theme.termFontSize || 14;
+  root.style.setProperty("--text-2xs", `${base - 3}px`);
+  root.style.setProperty("--text-xs", `${base - 2}px`);
+  root.style.setProperty("--text-sm", `${base - 1}px`);
+  root.style.setProperty("--text-base", `${base}px`);
+  root.style.setProperty("--text-md", `${base + 1}px`);
+  root.style.setProperty("--text-lg", `${base + 2}px`);
+  root.style.setProperty("--text-xl", `${base + 4}px`);
 
   // UI / chat font
   if (theme.uiFont) {
