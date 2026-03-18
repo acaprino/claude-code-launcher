@@ -20,6 +20,7 @@ const UsagePage = lazy(() => import("./components/UsagePage"));
 const SystemPromptPage = lazy(() => import("./components/SystemPromptPage"));
 const SessionBrowser = lazy(() => import("./components/SessionBrowser"));
 const SessionPanel = lazy(() => import("./components/SessionPanel"));
+const TranscriptView = lazy(() => import("./components/TranscriptView"));
 
 // R13: Cache window reference at module level (always same window in Tauri)
 const appWindow = getCurrentWindow();
@@ -403,9 +404,20 @@ function AppContent() {
                       onResumeSession={handleResumeSession}
                       onForkSession={handleForkSession}
                       onViewSession={(sessionId) => {
-                        // TODO: view session transcript
-                        console.log("View session", sessionId);
+                        const newId = addTab();
+                        updateTab(newId, { type: "transcript", transcriptSessionId: sessionId });
                       }}
+                    />
+                  </Suspense>
+                </ErrorBoundary>
+              ) : tab.type === "transcript" ? (
+                <ErrorBoundary tabId={tab.id} onClose={closeTab}>
+                  <Suspense fallback={null}>
+                    <TranscriptView
+                      sessionId={tab.transcriptSessionId!}
+                      tabId={tab.id}
+                      isActive={isActive}
+                      onRequestClose={closeTab}
                     />
                   </Suspense>
                 </ErrorBoundary>

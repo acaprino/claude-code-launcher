@@ -7,7 +7,7 @@ export interface SystemPrompt {
 
 export interface Tab {
   id: string;
-  type: "new-tab" | "agent" | "about" | "usage" | "system-prompt" | "sessions";
+  type: "new-tab" | "agent" | "about" | "usage" | "system-prompt" | "sessions" | "transcript";
   projectPath?: string;
   projectName?: string;
 
@@ -24,6 +24,8 @@ export interface Tab {
   resumeSessionId?: string;
   /** When set, Terminal will call forkAgent() instead of spawnAgent(). Consumed on mount. */
   forkSessionId?: string;
+  /** Session ID for transcript viewer tabs. */
+  transcriptSessionId?: string;
 }
 
 export interface ProjectInfo {
@@ -134,7 +136,9 @@ export function getTabLabel(tab: Tab): string {
             ? "System Prompts"
             : tab.type === "sessions"
               ? "Sessions"
-              : "New Tab";
+              : tab.type === "transcript"
+                ? "Transcript"
+                : "New Tab";
   return tab.tagline ? `${baseName} \u2014 ${tab.tagline}` : baseName;
 }
 
