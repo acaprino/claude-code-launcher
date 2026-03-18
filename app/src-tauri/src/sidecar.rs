@@ -489,11 +489,6 @@ impl SidecarManager {
         self.channels.write().unwrap_or_else(|e| e.into_inner()).insert(tab_id.to_string(), channel);
     }
 
-    /// Remove a tab's channel.
-    pub fn unregister_channel(&self, tab_id: &str) {
-        self.channels.write().unwrap_or_else(|e| e.into_inner()).remove(tab_id);
-    }
-
     /// Register a oneshot for receiving a single response (list_sessions, get_messages).
     pub fn register_oneshot(&self, key: &str) -> tokio::sync::oneshot::Receiver<serde_json::Value> {
         let (tx, rx) = tokio::sync::oneshot::channel();
