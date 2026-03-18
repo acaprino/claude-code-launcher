@@ -190,8 +190,10 @@
 .history-separator span {
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  opacity: 0.6;
 }
+
+/* Separator sits at the boundary — don't dim it with the history messages */
+.chat-msg--history-separator { opacity: 0.6; }
 
 .chat-msg--result {
   padding: 0;

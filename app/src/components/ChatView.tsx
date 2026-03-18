@@ -500,42 +500,51 @@ export default memo(function ChatView({
       }
     };
 
-    // Load previous conversation history for resume/fork sessions
+    // Load previous conversation history for resume/fork, then launch the agent.
+    // History must resolve before agent launch to prevent live events interleaving
+    // with the prepended history messages.
     const historySessionId = resumeSessionId || forkSessionId;
-    if (historySessionId) {
-      getAgentMessages(historySessionId, projectPath).then((data: unknown) => {
-        if (cancelled) return;
-        const { messages: sdkMsgs } = data as { messages: Array<{ type: string; message: { role: string; content: string | Array<{ type: string; text?: string; name?: string; input?: unknown }> } }> };
-        if (!sdkMsgs?.length) return;
-        const historyMsgs: ChatMessage[] = [];
-        for (const m of sdkMsgs) {
-          const role = m.message?.role;
-          const content = m.message?.content;
-          if (!content) continue;
-          if (role === "user") {
-            const text = typeof content === "string" ? content : (content as Array<{ type: string; text?: string }>).filter(b => b.type === "text").map(b => b.text).join("\n");
-            if (text) historyMsgs.push({ id: `hist-${historyMsgs.length}`, role: "user", text, timestamp: 0 });
-          } else if (role === "assistant") {
-            const blocks = Array.isArray(content) ? content as Array<{ type: string; text?: string; name?: string; input?: unknown }> : [];
-            for (const block of blocks) {
-              if (block.type === "text" && block.text) {
-                historyMsgs.push({ id: `hist-${historyMsgs.length}`, role: "assistant", text: block.text, streaming: false, timestamp: 0 });
-              } else if (block.type === "tool_use" && block.name) {
-                historyMsgs.push({ id: `hist-${historyMsgs.length}`, role: "tool", tool: block.name, input: block.input, timestamp: 0 });
-              }
-            }
-          }
-        }
-        if (historyMsgs.length > 0) {
-          historyMsgs.push({ id: "hist-sep", role: "history-separator", timestamp: 0 });
-          setMessages(prev => [...historyMsgs, ...prev]);
-        }
-      }).catch(() => { /* history is best-effort */ });
-    }
-
     let channelRef: { onmessage: ((event: AgentEvent) => void) | null } | null = null;
 
-    const launchPromise = resumeSessionId
+    (async () => {
+      if (historySessionId) {
+        try {
+          const data = await getAgentMessages(historySessionId, projectPath);
+          if (cancelled) return;
+          const sdkMsgs = (data as Record<string, unknown>)?.messages;
+          if (!Array.isArray(sdkMsgs) || !sdkMsgs.length) { /* no history */ }
+          else {
+            const historyMsgs: ChatMessage[] = [];
+            for (const m of sdkMsgs) {
+              const role = m?.message?.role;
+              const content = m?.message?.content;
+              if (!content) continue;
+              if (role === "user") {
+                const text = typeof content === "string" ? content : (Array.isArray(content) ? content.filter((b: Record<string, unknown>) => b.type === "text").map((b: Record<string, unknown>) => b.text).join("\n") : "");
+                if (text) historyMsgs.push({ id: `hist-${tabId}-${historyMsgs.length}`, role: "user", text, timestamp: 0 });
+              } else if (role === "assistant") {
+                const blocks = Array.isArray(content) ? content : [];
+                for (const block of blocks) {
+                  if (block.type === "text" && block.text) {
+                    historyMsgs.push({ id: `hist-${tabId}-${historyMsgs.length}`, role: "assistant", text: block.text, streaming: false, timestamp: 0 });
+                  } else if (block.type === "tool_use" && block.name) {
+                    historyMsgs.push({ id: `hist-${tabId}-${historyMsgs.length}`, role: "tool", tool: block.name, input: block.input, timestamp: 0 });
+                  }
+                }
+              }
+            }
+            if (historyMsgs.length > 0) {
+              historyMsgs.push({ id: `hist-sep-${tabId}`, role: "history-separator", timestamp: 0 });
+              setMessages(historyMsgs);
+            }
+          }
+        } catch (err) {
+          console.warn("History load failed:", err);
+        }
+      }
+      if (cancelled) return;
+
+      const launchPromise = resumeSessionId
       ? resumeAgent(tabId, resumeSessionId, projectPath, modelId, effortId, permMode, plugins, handleAgentEvent)
       : forkSessionId
         ? forkAgent(tabId, forkSessionId, projectPath, modelId, effortId, permMode, plugins, handleAgentEvent)
@@ -563,6 +572,7 @@ export default memo(function ChatView({
         if (cancelled) return;
         onErrorRef.current(tabIdRef.current, String(err));
       });
+    })();
 
     return () => {
       cancelled = true;
@@ -925,7 +935,7 @@ export default memo(function ChatView({
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
                 id={`msg-${msg.id}`}
-                className={`chat-msg chat-msg--${msg.role}${msg.timestamp === 0 ? " chat-msg--history" : ""}`}
+                className={`chat-msg chat-msg--${msg.role}${msg.id.startsWith("hist-") ? " chat-msg--history" : ""}`}
                 style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
               >
                 {content}
