@@ -5,7 +5,10 @@
   "platforms": ["windows"],
   "permissions": [
     "core:default",
-    "core:asset:default",
+    {
+      "identifier": "core:asset:default",
+      "allow": [{ "path": "$TEMP/anvil_clipboard/**" }]
+    },
     "core:window:allow-set-title",
     "core:window:allow-close",
     "allow-scan-projects",
