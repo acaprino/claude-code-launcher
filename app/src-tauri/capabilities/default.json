@@ -48,6 +48,9 @@
     "allow-read-external-file",
     "allow-run-claude-command",
     "allow-get-marketplace-plugins",
-    "allow-set-marketplace-global"
+    "allow-set-marketplace-global",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify"
   ]
 }

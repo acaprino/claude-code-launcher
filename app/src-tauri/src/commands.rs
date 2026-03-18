@@ -308,11 +308,12 @@ fn validate_perm_mode(mode: &str) -> &str {
 }
 
 /// Ensure `project_path` is a valid, existing directory — creating it if necessary.
-/// Rejects UNC paths and path traversal (`..` components).
+/// Rejects UNC paths and path traversal (`..` components) after canonicalization.
 fn ensure_project_dir(project_path: &str) -> Result<(), String> {
     if crate::projects::is_unc(project_path) {
         return Err("UNC paths are not supported".to_string());
     }
+    // Reject raw ".." before creating dirs, then verify canonicalized path
     if project_path.contains("..") {
         return Err("Path traversal is not allowed".to_string());
     }
@@ -321,6 +322,14 @@ fn ensure_project_dir(project_path: &str) -> Result<(), String> {
         log_warn!("ensure_project_dir: creating missing directory: {project_path}");
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("Failed to create project directory: {e}"))?;
+    }
+    // Verify canonicalized path has no traversal components
+    let canonical = dir.canonicalize()
+        .map_err(|e| format!("Cannot resolve project directory: {e}"))?;
+    for component in canonical.components() {
+        if let std::path::Component::ParentDir = component {
+            return Err("Path traversal is not allowed".to_string());
+        }
     }
     Ok(())
 }
@@ -581,17 +590,16 @@ pub async fn refresh_commands(
 
 // ── File access commands ────────────────────────────────────────────
 
-/// Read the content of a file from anywhere on the filesystem.
-/// Used to inline attached file content into agent messages.
-/// Handles UTF-8 and falls back to lossy conversion for other encodings.
 const MAX_EXTERNAL_FILE_SIZE: u64 = 1_048_576; // 1 MB
 
 const BLOCKED_DIRS: &[&str] = &[".ssh", ".gnupg", ".claude", ".aws", ".config", ".npmrc", ".kube", ".docker"];
 
-#[tauri::command]
-pub fn read_external_file(path: String) -> Result<String, String> {
-    log_info!("read_external_file: {path}");
-    let p = std::path::Path::new(&path)
+/// Validate an external file path: canonicalize, reject UNC, block sensitive dirs.
+fn validate_external_path(path: &str) -> Result<std::path::PathBuf, String> {
+    if crate::projects::is_unc(path) {
+        return Err("UNC paths are not supported".to_string());
+    }
+    let p = std::path::Path::new(path)
         .canonicalize()
         .map_err(|e| format!("Cannot resolve path: {e}"))?;
     // Block sensitive directories
@@ -599,11 +607,21 @@ pub fn read_external_file(path: String) -> Result<String, String> {
         if let std::path::Component::Normal(s) = component {
             let s = s.to_string_lossy();
             if BLOCKED_DIRS.iter().any(|b| s.eq_ignore_ascii_case(b)) {
-                log_warn!("read_external_file: blocked sensitive path: {path}");
+                log_warn!("validate_external_path: blocked sensitive path: {path}");
                 return Err("Access to sensitive directories is blocked".to_string());
             }
         }
     }
+    Ok(p)
+}
+
+/// Read the content of a file from anywhere on the filesystem.
+/// Used to inline attached file content into agent messages.
+/// Handles UTF-8 and falls back to lossy conversion for other encodings.
+#[tauri::command]
+pub fn read_external_file(path: String) -> Result<String, String> {
+    log_info!("read_external_file: {path}");
+    let p = validate_external_path(&path)?;
     if !p.is_file() {
         return Err("File does not exist".to_string());
     }
@@ -720,6 +738,11 @@ pub async fn run_claude_command(subcommand: String) -> Result<CliResult, String>
 #[tauri::command]
 pub async fn write_text_file(path: String, content: String) -> Result<(), String> {
     log_info!("write_text_file: {path}");
+    // Validate path: reject UNC, block sensitive dirs (same as read_external_file)
+    validate_external_path(&path)?;
+    if content.len() as u64 > MAX_EXTERNAL_FILE_SIZE {
+        return Err(format!("Content too large ({} bytes, max {})", content.len(), MAX_EXTERNAL_FILE_SIZE));
+    }
     tokio::task::spawn_blocking(move || {
         std::fs::write(&path, content).map_err(|e| format!("Failed to write file: {e}"))
     })

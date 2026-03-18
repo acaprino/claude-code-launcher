@@ -11,6 +11,7 @@ import type { AgentEvent, AgentTask, Attachment, ChatMessage, PermissionSuggesti
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { sanitizeInput } from "../utils/sanitizeInput";
+import { notifyAttention } from "../utils/notify";
 import type { Command } from "../components/chat/CommandMenu";
 
 // ── Session stats reducer ─────────────────────────────────────────
@@ -276,6 +277,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         }]);
         setInputState("processing");
         onTaglineChangeRef.current?.(tabIdRef.current, `Permission: ${event.tool}`);
+        notifyAttention("Permission Required", `${event.tool}: ${event.description || "Tool needs approval"}`).catch(() => {});
       } else if (event.type === "ask") {
         finalizeStreaming();
         finalizeThinking();
@@ -285,12 +287,14 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         }]);
         setInputState("processing");
         onTaglineChangeRef.current?.(tabIdRef.current, "Question");
+        notifyAttention("Question", "Claude is asking a question").catch(() => {});
         queueMicrotask(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }));
       } else if (event.type === "inputRequired") {
         finalizeStreaming();
         finalizeThinking();
         setInputState("awaiting_input");
         onTaglineChangeRef.current?.(tabIdRef.current, "");
+        notifyAttention("Input Required", "Claude is waiting for your input").catch(() => {});
       } else if (event.type === "thinking") {
         finalizeStreaming();
         if (!thinkingIdRef.current) {

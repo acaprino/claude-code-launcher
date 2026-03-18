@@ -62,6 +62,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(sidecar_manager)
         .setup(|app| {
             log_info!("setup: loading initial settings");
@@ -74,8 +75,7 @@ fn main() {
 
             // On startup, if marketplace_global is disabled, clean stale entries
             // from ~/.claude/settings.json (one-time migration from old git-clone approach).
-            let startup_settings = projects::load_settings();
-            let marketplace_global = startup_settings.extra
+            let marketplace_global = settings.extra
                 .get("marketplace_global")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);

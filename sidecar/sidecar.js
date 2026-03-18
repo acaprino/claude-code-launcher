@@ -549,7 +549,7 @@ function handleKill(cmd, silent = false) {
   }
   // Resolve any pending AskUserQuestion
   if (session.pendingAskUser) {
-    session.pendingAskUser.resolve({ behavior: "allow" });
+    session.pendingAskUser.resolve({ behavior: "deny", message: "Session killed" });
     session.pendingAskUser = null;
   }
 
