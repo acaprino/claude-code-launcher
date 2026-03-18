@@ -1,14 +1,9 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, respondPermission, respondAskUser, refreshCommands, runClaudeCommand, getAgentMessages } from "../hooks/useAgentSession";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
-import { MODELS, EFFORTS, PERM_MODES } from "../types";
-import type { AgentEvent, AgentTask, Attachment, ChatMessage, PermissionSuggestion, SlashCommand, AgentInfoSDK } from "../types";
-import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { MODELS, EFFORTS } from "../types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { sanitizeInput } from "../utils/sanitizeInput";
 import { fmtTokens } from "../utils/format";
+import type { SessionViewProps } from "./SessionViewProps";
 import ChatInput from "./chat/ChatInput";
 import type { Command } from "./chat/CommandMenu";
 import MessageBubble from "./chat/MessageBubble";
@@ -27,12 +22,6 @@ const FILE_TAG_RE = /<file\s+path="([^"]*)"[^>]*>\n?([\s\S]{0,1048576}?)\n?<\/fi
 const IMAGE_TAG_RE = /\[Attached image: ([^\]]+)\]/;
 const FALLBACK_TAG_RE = /\[Attached: ([^\]]+)\]/;
 
-// Module-level: tracks pending deferred kills across component instances.
-// When a new ChatView mounts for a tabId, it cancels any pending kill — this
-// handles both StrictMode re-mounts AND navigation (resume/fork) which create
-// a new component instance with a fresh useRef.
-const _pendingKills = new Map<string, ReturnType<typeof setTimeout>>();
-
 const ATTACHMENT_RE = new RegExp(
   `(?:${FILE_TAG_RE.source})|(?:${IMAGE_TAG_RE.source})|(?:${FALLBACK_TAG_RE.source})`,
   "g",
@@ -50,7 +39,6 @@ const UserMessage = memo(function UserMessage({ text }: { text: string }) {
       if (before) parts.push(<span key={key++}>{before}</span>);
     }
     if (match[1] !== undefined) {
-      // <file path="..." name="...">content</file>
       const filePath = match[1];
       const content = match[2];
       const filename = filePath.replace(/\\/g, "/").split("/").pop() || filePath;
@@ -64,7 +52,6 @@ const UserMessage = memo(function UserMessage({ text }: { text: string }) {
         </div>
       );
     } else {
-      // [Attached image: path] or [Attached: path]
       const filePath = match[3] || match[4];
       const filename = filePath.replace(/\\/g, "/").split("/").pop() || filePath;
       const isImage = match[3] !== undefined;
@@ -101,128 +88,31 @@ const CopyMessageBtn = memo(function CopyMessageBtn({ text }: { text: string }) 
   );
 });
 
-// ── Session stats reducer ─────────────────────────────────────────
-interface SessionStats {
-  tokens: number;
-  contextWindow: number;
-  cost: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  turns: number;
-  durationMs: number;
-  rateLimitUtil: number;
-}
+export default memo(function ChatView(props: SessionViewProps) {
+  const {
+    modelIdx, effortIdx, isActive,
+    inputStyle = "terminal", hideThinking,
+    controller: ctrl,
+  } = props;
 
-const INITIAL_STATS: SessionStats = {
-  tokens: 0, contextWindow: 0, cost: 0,
-  inputTokens: 0, outputTokens: 0,
-  cacheReadTokens: 0, cacheWriteTokens: 0,
-  turns: 0, durationMs: 0, rateLimitUtil: 0,
-};
+  const {
+    messages, displayItems, deferredMessages,
+    inputState, stats, agentTasks, sdkCommands, sdkAgents,
+    hasUnresolvedPermission,
+    streamingTextRef, streamingIdRef, streamingTick,
+    thinkingTextRef, thinkingIdRef, thinkingTick,
+    messagesEndRef,
+    handleSubmit, handlePermissionRespond, handleAskUserRespond,
+    handleCommand, handleInterrupt,
+    droppedFiles, setDroppedFiles, handleDroppedFilesConsumed, handleAttachClick,
+  } = ctrl;
 
-type StatsAction =
-  | { type: "result"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; turns: number; durationMs: number; contextWindow: number }
-  | { type: "rateLimit"; utilization: number };
-
-function statsReducer(state: SessionStats, action: StatsAction): SessionStats {
-  switch (action.type) {
-    case "result":
-      return {
-        ...state,
-        tokens: state.tokens + (action.inputTokens || 0) + (action.outputTokens || 0),
-        contextWindow: action.contextWindow > 0 ? action.contextWindow : state.contextWindow,
-        cost: state.cost + (action.cost || 0),
-        inputTokens: state.inputTokens + (action.inputTokens || 0),
-        outputTokens: state.outputTokens + (action.outputTokens || 0),
-        cacheReadTokens: state.cacheReadTokens + (action.cacheReadTokens || 0),
-        cacheWriteTokens: state.cacheWriteTokens + (action.cacheWriteTokens || 0),
-        turns: state.turns + (action.turns || 0),
-        durationMs: state.durationMs + (action.durationMs || 0),
-      };
-    case "rateLimit":
-      return { ...state, rateLimitUtil: action.utilization };
-  }
-}
-
-interface ChatViewProps {
-  tabId: string;
-  projectPath: string;
-  modelIdx: number;
-  effortIdx: number;
-  permModeIdx: number;
-  systemPrompt: string;
-  isActive: boolean;
-  onSessionCreated: (tabId: string, sessionId: string) => void;
-  onNewOutput: (tabId: string) => void;
-  onExit: (tabId: string, code: number) => void;
-  onError: (tabId: string, msg: string) => void;
-  onTaglineChange?: (tabId: string, tagline: string) => void;
-  inputStyle?: "chat" | "terminal";
-  hideThinking?: boolean;
-  plugins?: string[];
-  resumeSessionId?: string;
-  forkSessionId?: string;
-}
-
-export default memo(function ChatView({
-  tabId, projectPath, modelIdx, effortIdx, permModeIdx, systemPrompt,
-  isActive,
-  onSessionCreated, onNewOutput, onExit, onError, onTaglineChange,
-  inputStyle = "terminal", hideThinking, plugins = [], resumeSessionId, forkSessionId,
-}: ChatViewProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputState, setInputState] = useState<"idle" | "awaiting_input" | "processing">("idle");
   const [isDragging, setIsDragging] = useState(false);
-  const [droppedFiles, setDroppedFiles] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showMiniInput, setShowMiniInput] = useState(false);
-  const [stats, dispatchStats] = useReducer(statsReducer, INITIAL_STATS);
-  const [sdkCommands, setSdkCommands] = useState<SlashCommand[]>([]);
-  const [sdkAgents, setSdkAgents] = useState<AgentInfoSDK[]>([]);
-  const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
-  const agentTasksRef = useRef<AgentTask[]>([]);
-  const taskFlushRafRef = useRef(0);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const exitedRef = useRef(false);
-  const agentStartedRef = useRef(false);
-  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tabIdRef = useRef(tabId);
-  tabIdRef.current = tabId;
-
-  const idCounterRef = useRef(0);
-  const nextId = () => `msg-${tabId}-${++idCounterRef.current}`;
-
-  // Streaming text extraction: keep streaming text in refs to avoid O(n) array copy per chunk.
-  // Only touch messages array on stream start (placeholder) and end (finalize).
-  const streamingTextRef = useRef("");
-  const streamingIdRef = useRef<string | null>(null);
-  const [streamingTick, setStreamingTick] = useState(0);
-  const rafIdRef = useRef(0);
-
-  // Thinking text — same ref+rAF pattern as streaming to avoid O(n) array copy per delta.
-  const thinkingTextRef = useRef("");
-  const thinkingIdRef = useRef<string | null>(null);
-  const thinkingRafRef = useRef(0);
-  const [thinkingTick, setThinkingTick] = useState(0);
-
-  // Callback refs to avoid stale closures in useEffect
-  const onSessionCreatedRef = useRef(onSessionCreated);
-  onSessionCreatedRef.current = onSessionCreated;
-  const onNewOutputRef = useRef(onNewOutput);
-  onNewOutputRef.current = onNewOutput;
-  const onExitRef = useRef(onExit);
-  onExitRef.current = onExit;
-  const onErrorRef = useRef(onError);
-  onErrorRef.current = onError;
-  const onTaglineChangeRef = useRef(onTaglineChange);
-  onTaglineChangeRef.current = onTaglineChange;
-  const isActiveRef = useRef(isActive);
-  isActiveRef.current = isActive;
-
-  // Auto-scroll on new messages or streaming updates — only if user is near the bottom
   const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll on new messages or streaming updates
   useEffect(() => {
     const el = chatContainerRef.current;
     if (!el) return;
@@ -230,7 +120,7 @@ export default memo(function ChatView({
     if (nearBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
-  }, [messages, streamingTick, thinkingTick]);
+  }, [messages, streamingTick, thinkingTick, messagesEndRef]);
 
   // Track scroll position for terminal mode floating mini-input
   useEffect(() => {
@@ -245,7 +135,7 @@ export default memo(function ChatView({
     return () => el.removeEventListener("scroll", handleScroll);
   }, [inputStyle]);
 
-  // Auto-focus textarea when the window regains focus (alt-tab back to Anvil)
+  // Auto-focus textarea when window regains focus
   useEffect(() => {
     if (!isActive) return;
     const handleWindowFocus = () => {
@@ -258,589 +148,27 @@ export default memo(function ChatView({
     return () => window.removeEventListener("focus", handleWindowFocus);
   }, [isActive]);
 
-  // ── Agent lifecycle ─────────────────────────────────────────────
-  useEffect(() => {
-    // Cancel any pending deferred kill for this tabId — covers both StrictMode
-    // re-mounts (same instance) AND navigation remounts (new instance, same tabId).
-    const pendingKill = _pendingKills.get(tabId);
-    if (pendingKill) {
-      clearTimeout(pendingKill);
-      _pendingKills.delete(tabId);
-    }
-    setMessages([]);               // Clear stale messages from previous StrictMode mount
-    setInputState("idle");
-    let cancelled = false;
-
-    const modelId = MODELS[modelIdx]?.id || "";
-    const effortId = EFFORTS[effortIdx] || "high";
-    const permMode = PERM_MODES[permModeIdx]?.sdk || "plan";
-
-    // Extracted helper: finalize any pending streaming message.
-    // Streaming text lives in component-level refs to avoid O(n) array copies per chunk.
-    const finalizeStreaming = () => {
-      if (!streamingIdRef.current) return;
-      const id = streamingIdRef.current;
-      const text = streamingTextRef.current;
-      streamingIdRef.current = null;
-      streamingTextRef.current = "";
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-      setMessages(prev => [...prev, { id, role: "assistant", text, streaming: false, timestamp: Date.now() }]);
-    };
-
-    // Finalize thinking: commit accumulated thinking text into the messages array.
-    const finalizeThinking = () => {
-      if (!thinkingIdRef.current) return;
-      const id = thinkingIdRef.current;
-      const text = thinkingTextRef.current;
-      thinkingIdRef.current = null;
-      thinkingTextRef.current = "";
-      cancelAnimationFrame(thinkingRafRef.current);
-      thinkingRafRef.current = 0;
-      setMessages(prev => [...prev, { id, role: "thinking", text, timestamp: Date.now() }]);
-    };
-
-    const handleAgentEvent = (event: AgentEvent) => {
-      if (cancelled) return;
-
-      if (event.type === "assistant") {
-        if (event.streaming) {
-          // Accumulate streaming text in refs — NO messages array copy per chunk.
-          if (!streamingIdRef.current) {
-            streamingIdRef.current = nextId();
-            streamingTextRef.current = event.text;
-          } else {
-            streamingTextRef.current += event.text;
-          }
-          // RAF-throttle re-renders: coalesce multiple chunks per frame
-          if (!rafIdRef.current) {
-            rafIdRef.current = requestAnimationFrame(() => {
-              rafIdRef.current = 0;
-              setStreamingTick(t => t + 1);
-            });
-          }
-        } else {
-          // Complete message — finalize streaming or add new
-          if (streamingIdRef.current) {
-            finalizeStreaming();
-          } else {
-            setMessages(prev => [...prev, { id: nextId(), role: "assistant", text: event.text, streaming: false, timestamp: Date.now() }]);
-          }
-        }
-        onTaglineChangeRef.current?.(tabIdRef.current, "");
-      } else if (event.type === "toolUse") {
-        finalizeStreaming();
-        finalizeThinking();
-        setMessages(prev => [...prev, { id: nextId(), role: "tool", tool: event.tool, input: event.input, timestamp: Date.now() }]);
-        const inp = event.input as Record<string, string> | undefined;
-        const detail = event.tool === "Bash" ? (inp?.command || "").slice(0, 40)
-          : event.tool === "Edit" || event.tool === "Write" || event.tool === "Read"
-            ? (inp?.file_path || "").split(/[/\\]/).pop() || ""
-            : "";
-        onTaglineChangeRef.current?.(tabIdRef.current, detail ? `${event.tool}: ${detail}` : event.tool);
-      } else if (event.type === "toolResult") {
-        // Update the most recent matching tool message with output (scan backward without copy)
-        setMessages(prev => {
-          for (let i = prev.length - 1; i >= 0; i--) {
-            const m = prev[i];
-            if (m.role === "tool" && m.tool === event.tool && m.output === undefined) {
-              const next = [...prev];
-              next[i] = { ...m, output: event.output, success: event.success };
-              return next;
-            }
-          }
-          return prev;
-        });
-      } else if (event.type === "permission") {
-        setMessages(prev => [...prev, {
-          id: nextId(), role: "permission", tool: event.tool, description: event.description,
-          suggestions: event.suggestions, timestamp: Date.now(),
-        }]);
-        setInputState("processing"); // Block input during permission
-        onTaglineChangeRef.current?.(tabIdRef.current, `Permission: ${event.tool}`);
-      } else if (event.type === "ask") {
-        finalizeStreaming();
-        finalizeThinking();
-        setMessages(prev => [...prev, {
-          id: nextId(), role: "ask", questions: event.questions,
-          timestamp: Date.now(),
-        }]);
-        setInputState("processing");
-        onTaglineChangeRef.current?.(tabIdRef.current, "Question");
-        // Auto-scroll so the interactive card is visible
-        queueMicrotask(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }));
-      } else if (event.type === "inputRequired") {
-        finalizeStreaming();
-        finalizeThinking();
-        setInputState("awaiting_input");
-        onTaglineChangeRef.current?.(tabIdRef.current, "");
-      } else if (event.type === "thinking") {
-        finalizeStreaming();
-        // Accumulate thinking deltas in refs — same pattern as streaming text.
-        if (!thinkingIdRef.current) {
-          thinkingIdRef.current = nextId();
-          thinkingTextRef.current = event.text;
-        } else {
-          thinkingTextRef.current += event.text;
-        }
-        if (!thinkingRafRef.current) {
-          thinkingRafRef.current = requestAnimationFrame(() => {
-            thinkingRafRef.current = 0;
-            setThinkingTick(t => t + 1);
-          });
-        }
-        onTaglineChangeRef.current?.(tabIdRef.current, "Thinking...");
-      } else if (event.type === "result") {
-        finalizeStreaming();
-        finalizeThinking();
-        // Accumulate session stats in a single dispatch (1 re-render instead of 7+)
-        dispatchStats({
-          type: "result",
-          inputTokens: event.inputTokens || 0,
-          outputTokens: event.outputTokens || 0,
-          cacheReadTokens: event.cacheReadTokens || 0,
-          cacheWriteTokens: event.cacheWriteTokens || 0,
-          cost: event.cost || 0,
-          turns: event.turns || 0,
-          durationMs: event.durationMs || 0,
-          contextWindow: event.contextWindow || 0,
-        });
-        // Mark thinking messages as ended (collapsed), add result
-        setMessages(prev => [
-          ...prev.map(m => m.role === "thinking" && !m.ended ? { ...m, ended: true } as ChatMessage : m),
-          { id: nextId(), role: "result", ...event, timestamp: Date.now() },
-        ]);
-        onTaglineChangeRef.current?.(tabIdRef.current, "");
-      } else if (event.type === "error") {
-        setMessages(prev => {
-          // Deduplicate rate limit errors — scan backward past transient messages
-          if (event.code === "rate_limit") {
-            for (let i = prev.length - 1; i >= 0; i--) {
-              const m = prev[i];
-              if (m.role === "error" && m.code === "rate_limit") {
-                const next = [...prev];
-                next[i] = { ...m, message: event.message, timestamp: Date.now() };
-                return next;
-              }
-              if (m.role !== "error" && m.role !== "tool" && m.role !== "thinking" && m.role !== "status") break;
-            }
-          }
-          return [...prev, { id: nextId(), role: "error", code: event.code, message: event.message, timestamp: Date.now() }];
-        });
-      } else if (event.type === "exit") {
-        exitedRef.current = true;
-        if (refreshIntervalRef.current) {
-          clearInterval(refreshIntervalRef.current);
-          refreshIntervalRef.current = null;
-        }
-        onExitRef.current(tabIdRef.current, event.code);
-      } else if (event.type === "progress") {
-        // Tool progress — show as transient status
-        onTaglineChangeRef.current?.(tabIdRef.current, event.message);
-      } else if (event.type === "todo") {
-        // Update or create todo list message
-        setMessages(prev => {
-          const existing = prev.findIndex(m => m.role === "todo");
-          if (existing >= 0) {
-            const next = [...prev];
-            next[existing] = { ...next[existing], todos: event.todos, timestamp: Date.now() } as ChatMessage;
-            return next;
-          }
-          return [...prev, { id: nextId(), role: "todo", todos: event.todos, timestamp: Date.now() }];
-        });
-      } else if (event.type === "taskStarted") {
-        // Duplicate guard: skip if taskId already tracked
-        if (!agentTasksRef.current.some(t => t.taskId === event.taskId)) {
-          const newTask: AgentTask = {
-            taskId: event.taskId, description: event.description, taskType: event.taskType,
-            status: "running", totalTokens: 0, toolUses: 0, durationMs: 0, lastToolName: "", summary: "",
-          };
-          agentTasksRef.current = [...agentTasksRef.current, newTask];
-          setAgentTasks(agentTasksRef.current);
-        }
-      } else if (event.type === "taskProgress") {
-        // Batch progress updates via rAF to avoid flooding re-renders
-        agentTasksRef.current = agentTasksRef.current.map(t => t.taskId === event.taskId ? {
-          ...t, description: event.description || t.description,
-          totalTokens: event.totalTokens, toolUses: event.toolUses,
-          durationMs: event.durationMs, lastToolName: event.lastToolName,
-          summary: event.summary || t.summary,
-        } : t);
-        if (!taskFlushRafRef.current) {
-          taskFlushRafRef.current = requestAnimationFrame(() => {
-            taskFlushRafRef.current = 0;
-            setAgentTasks(agentTasksRef.current);
-          });
-        }
-      } else if (event.type === "taskNotification") {
-        const validStatuses = new Set<AgentTask["status"]>(["completed", "failed", "stopped"]);
-        const status = validStatuses.has(event.status) ? event.status : "stopped";
-        agentTasksRef.current = agentTasksRef.current.map(t => t.taskId === event.taskId ? {
-          ...t, status,
-          summary: event.summary || t.summary,
-          totalTokens: event.totalTokens,
-          toolUses: event.toolUses,
-          durationMs: event.durationMs,
-        } : t);
-        setAgentTasks(agentTasksRef.current);
-      } else if (event.type === "rateLimit") {
-        dispatchStats({ type: "rateLimit", utilization: event.utilization });
-      } else if (event.type === "commandsInit") {
-        setSdkCommands(event.commands);
-        setSdkAgents(event.agents);
-      } else if (event.type === "autocomplete" || event.type === "status") {
-        // autocomplete: not implemented yet for chat UI
-        // status: only show non-null statuses
-        if (event.type === "status" && event.status && event.status !== "null" && event.status !== "started") {
-          setMessages(prev => [...prev, { id: nextId(), role: "status", status: event.status, model: event.model, timestamp: Date.now() }]);
-        }
-      }
-
-      if (!isActiveRef.current) {
-        onNewOutputRef.current(tabIdRef.current);
-      }
-    };
-
-    // Load previous conversation history for resume/fork, then launch the agent.
-    // History must resolve before agent launch to prevent live events interleaving
-    // with the prepended history messages.
-    const historySessionId = resumeSessionId || forkSessionId;
-    let channelRef: { onmessage: ((event: AgentEvent) => void) | null } | null = null;
-
-    (async () => {
-      if (historySessionId) {
-        try {
-          const data = await getAgentMessages(historySessionId, projectPath);
-          if (cancelled) return;
-          const sdkMsgs = (data as Record<string, unknown>)?.messages;
-          if (!Array.isArray(sdkMsgs) || !sdkMsgs.length) { /* no history */ }
-          else {
-            const historyMsgs: ChatMessage[] = [];
-            for (const m of sdkMsgs) {
-              const role = m?.message?.role;
-              const content = m?.message?.content;
-              if (!content) continue;
-              if (role === "user") {
-                const text = typeof content === "string" ? content : (Array.isArray(content) ? content.filter((b: Record<string, unknown>) => b.type === "text").map((b: Record<string, unknown>) => b.text).join("\n") : "");
-                if (text) historyMsgs.push({ id: `hist-${tabId}-${historyMsgs.length}`, role: "user", text, timestamp: 0 });
-              } else if (role === "assistant") {
-                const blocks = Array.isArray(content) ? content : [];
-                for (const block of blocks) {
-                  if (block.type === "text" && block.text) {
-                    historyMsgs.push({ id: `hist-${tabId}-${historyMsgs.length}`, role: "assistant", text: block.text, streaming: false, timestamp: 0 });
-                  } else if (block.type === "tool_use" && block.name) {
-                    historyMsgs.push({ id: `hist-${tabId}-${historyMsgs.length}`, role: "tool", tool: block.name, input: block.input, timestamp: 0 });
-                  }
-                }
-              }
-            }
-            if (historyMsgs.length > 0) {
-              historyMsgs.push({ id: `hist-sep-${tabId}`, role: "history-separator", timestamp: 0 });
-              setMessages(historyMsgs);
-            }
-          }
-        } catch (err) {
-          console.warn("History load failed:", err);
-        }
-      }
-      if (cancelled) return;
-
-      const launchPromise = resumeSessionId
-      ? resumeAgent(tabId, resumeSessionId, projectPath, modelId, effortId, permMode, plugins, handleAgentEvent)
-      : forkSessionId
-        ? forkAgent(tabId, forkSessionId, projectPath, modelId, effortId, permMode, plugins, handleAgentEvent)
-        : spawnAgent(tabId, projectPath, modelId, effortId, sanitizeInput(systemPrompt), permMode, plugins, handleAgentEvent);
-
-    launchPromise
-      .then((channel) => {
-        channelRef = channel;
-        // Don't kill here if cancelled — the deferred kill in cleanup handles it.
-        // Killing here would race with the re-mount's spawn in StrictMode.
-        if (cancelled) return;
-        agentStartedRef.current = true;
-        onSessionCreatedRef.current(tabIdRef.current, tabId);
-        // Start periodic refresh of commands/agents (every 60s)
-        refreshIntervalRef.current = setInterval(() => {
-          refreshCommands(tabId).then((data) => {
-            setSdkCommands(data.commands || []);
-            setSdkAgents(data.agents || []);
-          }).catch(() => {
-            // Keep last known lists on failure
-          });
-        }, 60_000);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        onErrorRef.current(tabIdRef.current, String(err));
-      });
-    })();
-
-    return () => {
-      cancelled = true;
-      // Null out channel handler to prevent stale events from StrictMode's first mount
-      if (channelRef) channelRef.onmessage = null;
-      // Clear streaming state
-      streamingIdRef.current = null;
-      streamingTextRef.current = "";
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-      // Clear thinking state
-      thinkingIdRef.current = null;
-      thinkingTextRef.current = "";
-      cancelAnimationFrame(thinkingRafRef.current);
-      thinkingRafRef.current = 0;
-      // Clear agent task state
-      cancelAnimationFrame(taskFlushRafRef.current);
-      taskFlushRafRef.current = 0;
-      agentTasksRef.current = [];
-      // Clear commands/agents refresh interval
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-      // Defer kill so StrictMode re-mount (or navigation remount) can cancel it.
-      const tid = tabIdRef.current;
-      const killTimer = setTimeout(() => {
-        _pendingKills.delete(tid);
-        killAgent(tid).catch(() => {});
-      }, 50);
-      _pendingKills.set(tid, killTimer);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Input submission ────────────────────────────────────────────
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const handleSubmit = useCallback(async (text: string, attachments: Attachment[]) => {
-    if (!agentStartedRef.current) return;
-    // Block input immediately to prevent double-submit during file reads
-    setInputState("processing");
-
-    // Read file content for attachments outside the project directory
-    let fullText = text;
-    if (attachments.length > 0) {
-      const parts: string[] = [];
-      for (const a of attachments) {
-        if (/\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(a.path)) {
-          parts.push(`[Attached image: ${a.path}]`);
-        } else {
-          try {
-            const content = await invoke<string>("read_external_file", { path: a.path });
-            const filename = a.path.replace(/\\/g, "/").split("/").pop() || a.path;
-            const safePath = a.path.replace(/"/g, "&quot;");
-            const safeName = filename.replace(/"/g, "&quot;");
-            parts.push(`<file path="${safePath}" name="${safeName}">\n${content}\n</file>`);
-          } catch {
-            parts.push(`[Attached: ${a.path}]`);
-          }
-        }
-      }
-      const attachPrefix = parts.join("\n");
-      fullText = attachPrefix + (text ? "\n\n" + text : "");
-    }
-    if (!fullText.trim()) {
-      setInputState("awaiting_input");
-      return;
-    }
-    // Guard: agent may have been killed during file reads
-    if (!agentStartedRef.current || exitedRef.current) {
-      setInputState("awaiting_input");
-      return;
-    }
-    setMessages(prev => [...prev, { id: nextId(), role: "user", text: fullText, timestamp: Date.now() }]);
-    sendAgentMessage(tabId, fullText).catch((err) => {
-      setMessages(prev => [...prev, { id: nextId(), role: "error", code: "send", message: String(err), timestamp: Date.now() }]);
-    });
-  }, [tabId]);
-
-  // ── Permission response ─────────────────────────────────────────
-  const respondedIdsRef = useRef(new Set<string>());
-  const handlePermissionRespond = useCallback((msgId: string, allow: boolean, suggestions?: PermissionSuggestion[]) => {
-    // Guard against double-click race
-    if (respondedIdsRef.current.has(msgId)) return;
-    respondedIdsRef.current.add(msgId);
-    setMessages(prev => prev.map(m =>
-      m.id === msgId && m.role === "permission" ? { ...m, resolved: true, allowed: allow } : m
-    ));
-    respondPermission(tabId, allow, suggestions).catch((err) => {
-      setMessages(prev => [...prev, { id: nextId(), role: "error", code: "permission", message: String(err), timestamp: Date.now() }]);
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId]);
-
-  // ── AskUserQuestion response ────────────────────────────────────
-  const handleAskUserRespond = useCallback((msgId: string, answers: Record<string, string>) => {
-    if (respondedIdsRef.current.has(msgId)) return;
-    respondedIdsRef.current.add(msgId);
-    setMessages(prev => prev.map(m =>
-      m.id === msgId && m.role === "ask" ? { ...m, resolved: true, answers } : m
-    ));
-    respondAskUser(tabId, answers).catch((err) => {
-      setMessages(prev => [...prev, { id: nextId(), role: "error", code: "ask_user", message: String(err), timestamp: Date.now() }]);
-    });
-  }, [tabId]);
-
-  // ── Keyboard shortcuts ─────────────────────────────────────────
+  // Keyboard shortcuts — Ctrl+C copies selection or interrupts agent
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.ctrlKey && e.key === "c") {
-      killAgent(tabId).catch(() => {});
+      if (window.getSelection()?.toString()) return; // let browser copy
+      handleInterrupt();
     } else if (e.ctrlKey && e.key === "b") {
       e.preventDefault();
       setSidebarOpen(prev => !prev);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId]);
+  }, [handleInterrupt]);
 
-  // Permission keyboard shortcuts: Y=allow, N=deny, A=allow+session
-  // Window-level listener so it works even when textarea is disabled/unfocused
-  useEffect(() => {
-    if (!isActive) return;
-    const handlePermissionKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-      const target = e.target as HTMLElement;
-      if (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable) return;
-      const key = e.key.toLowerCase();
-      if (key !== "y" && key !== "n" && key !== "a") return;
-      const allow = key !== "n";
-      // Find and respond to latest unresolved permission (side effect outside updater)
-      setMessages(prev => {
-        let idx = -1;
-        for (let i = prev.length - 1; i >= 0; i--) {
-          const m = prev[i];
-          if (m.role === "permission" && !m.resolved) { idx = i; break; }
-        }
-        if (idx < 0) return prev;
-        const msg = prev[idx];
-        if (msg.role !== "permission") return prev;
-        if (respondedIdsRef.current.has(msg.id)) return prev;
-        respondedIdsRef.current.add(msg.id);
-        const sugg = key === "a" ? msg.suggestions : undefined;
-        // Schedule IPC outside React's updater cycle
-        queueMicrotask(() => respondPermission(tabId, allow, sugg).catch(() => {}));
-        const next = [...prev];
-        next[idx] = { ...msg, resolved: true, allowed: allow };
-        return next;
-      });
-    };
-    window.addEventListener("keydown", handlePermissionKey);
-    return () => window.removeEventListener("keydown", handlePermissionKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, tabId]);
-
-  // ── Slash commands ─────────────────────────────────────────────
-  const handleCommand = useCallback((command: Command) => {
-    if (command.source === "skill") {
-      // SDK skill — send as slash command text to agent
-      sendAgentMessage(tabId, command.name).catch(console.error);
-      setInputState("processing");
+  // Wrap handleCommand to intercept /sidebar
+  const handleCommandWrapped = useCallback((command: Command) => {
+    if (command.name === "/sidebar") {
+      setSidebarOpen(prev => !prev);
       return;
     }
-    // Local commands
-    switch (command.name) {
-      case "/clear":
-        setMessages([]);
-        // Also clear SDK conversation history so Claude doesn't see old messages
-        sendAgentMessage(tabId, "/clear").catch(console.error);
-        break;
-      case "/sidebar":
-        setSidebarOpen((prev) => !prev);
-        break;
-      case "/compact":
-      case "/help":
-        sendAgentMessage(tabId, command.name).catch(console.error);
-        setInputState("processing");
-        break;
-      case "/theme":
-        window.dispatchEvent(new CustomEvent("anvil:open-settings"));
-        break;
-      case "/sessions":
-        window.dispatchEvent(new CustomEvent("anvil:open-sessions"));
-        break;
-      case "/login":
-      case "/logout":
-      case "/status":
-      case "/doctor": {
-        const sub = command.name.slice(1); // remove leading /
-        setMessages(prev => [...prev, { id: nextId(), role: "status", status: `Running claude ${sub}...`, model: "", timestamp: Date.now() }]);
-        runClaudeCommand(sub).then(async (result) => {
-          const output = (result.stdout || result.stderr || "").trim();
-          if (output) {
-            setMessages(prev => [...prev, { id: nextId(), role: "status", status: output, model: "", timestamp: Date.now() }]);
-          }
-          // Auto-open browser for login URL
-          if (result.url) {
-            try {
-              await shellOpen(result.url);
-              setMessages(prev => [...prev, { id: nextId(), role: "status", status: "Browser opened for authentication", model: "", timestamp: Date.now() }]);
-            } catch {
-              setMessages(prev => [...prev, { id: nextId(), role: "status", status: `Open this URL: ${result.url}`, model: "", timestamp: Date.now() }]);
-            }
-          }
-          if (!result.success && !output) {
-            setMessages(prev => [...prev, { id: nextId(), role: "error", code: sub, message: `claude ${sub} failed`, timestamp: Date.now() }]);
-          }
-        }).catch((err) => {
-          setMessages(prev => [...prev, { id: nextId(), role: "error", code: sub, message: String(err), timestamp: Date.now() }]);
-        });
-        break;
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId]);
+    handleCommand(command);
+  }, [handleCommand]);
 
-  // ── Stable callbacks for ChatInput memo ─────────────────────────
-  const handleDroppedFilesConsumed = useCallback(() => setDroppedFiles([]), []);
-
-  const handleAttachClick = useCallback(async () => {
-    try {
-      const result = await open({ multiple: true });
-      if (result) {
-        const paths = Array.isArray(result) ? result : [result];
-        setDroppedFiles(paths);
-      }
-    } catch { /* cancelled */ }
-  }, []);
-
-  // ── Derived state (O(1) — scan backward from last user message) ──
-  const hasUnresolvedPermission = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if ((m.role === "permission" || m.role === "ask") && !m.resolved) return true;
-      if (m.role === "user") break;
-    }
-    return false;
-  }, [messages]);
-
-  // ── Deferred messages for sidebar (skip re-renders during streaming)
-  const deferredMessages = useDeferredValue(messages);
-
-  // ── Group consecutive tool messages ──────────────────────────────
-  type ToolGroupItem = { role: "tool-group"; id: string; timestamp: number; tools: Extract<ChatMessage, { role: "tool" }>[] };
-  type DisplayItem = ChatMessage | ToolGroupItem;
-
-  const displayItems = useMemo((): DisplayItem[] => {
-    const result: DisplayItem[] = [];
-    let toolRun: Extract<ChatMessage, { role: "tool" }>[] = [];
-    const flush = () => {
-      if (toolRun.length === 1) result.push(toolRun[0]);
-      else if (toolRun.length > 1) result.push({ role: "tool-group", id: toolRun[0].id, timestamp: toolRun[0].timestamp, tools: toolRun });
-      toolRun = [];
-    };
-    for (const msg of messages) {
-      if (msg.role === "tool") {
-        toolRun.push(msg);
-      } else {
-        flush();
-        result.push(msg);
-      }
-    }
-    flush();
-    return result;
-  }, [messages]);
-
-  // ── Virtualizer for message list ──────────────────────────────
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  // Virtualizer
   const displayItemsRef = useRef(displayItems);
   displayItemsRef.current = displayItems;
 
@@ -852,14 +180,13 @@ export default memo(function ChatView({
     getItemKey: (index) => displayItems[index].id,
   });
 
-  // ── Scroll to message (for sidebar navigation) ─────────────────
+  // Scroll to message (for sidebar navigation)
   const handleScrollToMessage = useCallback((msgId: string) => {
     const index = displayItemsRef.current.findIndex(item =>
       item.role === "tool-group" ? item.tools.some(t => t.id === msgId) : item.id === msgId
     );
     if (index < 0) return;
     virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
-    // Wait for virtualizer to render the target element, then highlight
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const el = document.getElementById(`msg-${msgId}`);
@@ -871,7 +198,7 @@ export default memo(function ChatView({
     });
   }, [virtualizer]);
 
-  // ── Drag & Drop (Tauri native — provides full file paths) ──────
+  // Drag & Drop
   useEffect(() => {
     if (!isActive) return;
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {
@@ -895,9 +222,9 @@ export default memo(function ChatView({
       }
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [isActive]);
+  }, [isActive, setDroppedFiles, messagesEndRef]);
 
-  // Click anywhere in chat → refocus textarea (unless clicking another input)
+  // Click anywhere in chat -> refocus textarea
   const handleClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     if (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable) return;
@@ -975,13 +302,13 @@ export default memo(function ChatView({
             );
           })}
         </div>
-        {/* Thinking rendered outside virtual list — avoids O(n) array copy per delta */}
+        {/* Thinking rendered outside virtual list */}
         {thinkingIdRef.current && !hideThinking && (
           <div className="chat-msg chat-msg--thinking" style={{ maxHeight: "60vh", overflowY: "auto" }}>
             <ThinkingBlock text={thinkingTextRef.current} ended={false} />
           </div>
         )}
-        {/* Streaming message rendered outside virtual list — avoids O(n) array copy per chunk */}
+        {/* Streaming message rendered outside virtual list */}
         {streamingIdRef.current && (
           <div className="chat-msg chat-msg--assistant">
             <MessageBubble text={streamingTextRef.current} streaming={true} />
@@ -991,7 +318,7 @@ export default memo(function ChatView({
         {inputStyle === "terminal" && inputState === "awaiting_input" && (
           <ChatInput
             onSubmit={handleSubmit}
-            onCommand={handleCommand}
+            onCommand={handleCommandWrapped}
             disabled={false}
             processing={false}
             isActive={isActive}
@@ -1005,7 +332,7 @@ export default memo(function ChatView({
         {inputStyle === "terminal" && inputState === "processing" && !hasUnresolvedPermission && (
           <ChatInput
             onSubmit={handleSubmit}
-            onCommand={handleCommand}
+            onCommand={handleCommandWrapped}
             disabled={true}
             processing={true}
             isActive={isActive}
@@ -1023,7 +350,7 @@ export default memo(function ChatView({
       {inputStyle !== "terminal" && inputState === "awaiting_input" && (
         <ChatInput
           onSubmit={handleSubmit}
-          onCommand={handleCommand}
+          onCommand={handleCommandWrapped}
           disabled={false}
           processing={false}
           isActive={isActive}
@@ -1037,7 +364,7 @@ export default memo(function ChatView({
       {inputStyle !== "terminal" && inputState === "processing" && !hasUnresolvedPermission && (
         <ChatInput
           onSubmit={handleSubmit}
-          onCommand={handleCommand}
+          onCommand={handleCommandWrapped}
           disabled={true}
           processing={true}
           isActive={isActive}

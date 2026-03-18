@@ -1,0 +1,442 @@
+/* ── TerminalView — Warp/Fig-style compact terminal ──────────────── */
+.terminal-view {
+  --tv-font-size: 11px;
+  --tv-line-height: 1.35;
+  --tv-block-gap: 4px;
+  --tv-indent: 16px;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  font-size: var(--tv-font-size);
+  line-height: var(--tv-line-height);
+}
+
+/* ── Scroll container ─────────────────────────────────────────── */
+.tv-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-1) var(--space-2);
+  background: var(--mantle);
+}
+
+.tv-scroll::-webkit-scrollbar { width: 3px; }
+.tv-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--overlay0) 40%, transparent);
+}
+.tv-scroll::-webkit-scrollbar-thumb:hover { background: var(--overlay1); }
+.tv-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Lines ────────────────────────────────────────────────────── */
+.tv-line {
+  padding: 1px 0;
+}
+
+.tv-line--history { opacity: 0.4; }
+.tv-line--status {
+  color: var(--text-dim);
+  font-size: var(--tv-font-size);
+  opacity: 0.35;
+}
+
+/* ── Activity spinner (visible feedback while agent works) ────── */
+.tv-activity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.tv-activity-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tv-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.tv-activity-label {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.tv-elapsed {
+  color: var(--overlay0);
+  font-size: var(--tv-font-size);
+  font-style: normal;
+}
+
+@keyframes tv-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+/* ── Bottom bar activity dot ──────────────────────────────────── */
+.tv-bottom-activity {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tv-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* ── User message ─────────────────────────────────────────────── */
+.tv-user {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: var(--tv-block-gap) 0;
+}
+
+.tv-user-prompt {
+  color: var(--accent);
+  font-weight: 700;
+  margin-right: var(--space-1);
+}
+
+/* ── Assistant message (plain pre-wrap, no markdown parser) ───── */
+.tv-assistant {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 1px 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.tv-assistant--streaming::after {
+  content: "\258E";
+  animation: tv-blink 1s step-end infinite;
+  color: var(--accent);
+  font-weight: 300;
+}
+
+@keyframes tv-blink { 50% { opacity: 0; } }
+
+/* ── Tool call (single-line expandable) ──────────────────────── */
+.tv-tool { margin: 1px 0; }
+
+.tv-tool-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.tv-tool-header:hover { color: var(--overlay1); }
+
+.tv-tool-sigil {
+  color: var(--overlay0);
+  font-weight: 500;
+}
+
+.tv-tool--fail .tv-tool-sigil { color: var(--red); }
+
+.tv-tool-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tv-tool-preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.35;
+  font-size: var(--tv-font-size);
+}
+
+.tv-tool-status { font-size: var(--tv-font-size); }
+.tv-tool-status.ok { color: var(--green); }
+.tv-tool-status.fail { color: var(--red); }
+.tv-tool-status.pending {
+  color: var(--accent);
+  animation: tv-pulse 1.2s ease-in-out infinite;
+}
+
+.tv-tool-body {
+  padding-left: var(--tv-indent);
+}
+
+.tv-tool-input {
+  margin: 0;
+  padding: 1px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: inherit;
+  background: none;
+}
+
+.tv-tool-output {
+  margin: 0;
+  padding: 1px 0 1px var(--space-2);
+  border-left: 2px solid color-mix(in srgb, var(--green) 30%, transparent);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: inherit;
+  background: none;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.tv-tool-output::-webkit-scrollbar { width: 2px; }
+.tv-tool-output::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--overlay0) 30%, transparent);
+}
+
+.tv-tool-output--fail {
+  border-left-color: color-mix(in srgb, var(--red) 30%, transparent);
+}
+
+.tv-tool-group { margin: 1px 0; }
+
+.tv-toolgrp-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.tv-toolgrp-header:hover { color: var(--overlay1); }
+
+.tv-toolgrp-summary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.tv-toolgrp-toggle { opacity: 0.3; }
+
+/* ── Permission prompt ────────────────────────────────────────── */
+.tv-perm {
+  padding: var(--tv-block-gap) 0;
+}
+
+.tv-perm--pending {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tv-perm-q {
+  color: var(--yellow);
+  word-break: break-all;
+}
+
+.tv-perm-q strong { color: var(--text); }
+
+.tv-perm-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.tv-perm-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--tv-font-size);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+}
+
+.tv-perm-btn:hover { color: var(--text); }
+.tv-perm-btn--yes { color: var(--green); }
+.tv-perm-btn--all { color: var(--accent); }
+.tv-perm-btn--no { color: var(--red); }
+
+.tv-perm--resolved {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-dim);
+  opacity: 0.4;
+}
+
+.tv-perm--allowed .tv-perm-icon { color: var(--green); }
+.tv-perm--denied .tv-perm-icon { color: var(--red); }
+
+/* ── Thinking ─────────────────────────────────────────────────── */
+.tv-thinking { padding: 1px 0; }
+.tv-thinking--ended { opacity: 0.4; }
+
+.tv-thinking-header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.tv-thinking-header:hover { opacity: 0.7; }
+
+.tv-thinking-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tv-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.tv-thinking-tag {
+  color: var(--overlay0);
+  font-style: normal;
+}
+
+.tv-thinking-count { opacity: 0.6; }
+.tv-thinking-elapsed { color: var(--overlay0); font-style: normal; }
+.tv-thinking-toggle { opacity: 0.3; font-style: normal; }
+
+.tv-thinking-body {
+  margin: 0;
+  padding: 1px 0 1px var(--tv-indent);
+  border-left: 1px solid color-mix(in srgb, var(--overlay0) 25%, transparent);
+  white-space: pre-wrap;
+  font-style: italic;
+  color: var(--text-dim);
+  opacity: 0.4;
+  font-family: inherit;
+  font-size: inherit;
+  background: none;
+}
+
+.tv-thinking-spinner {
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.5;
+  animation: tv-blink 1.2s ease-in-out infinite;
+}
+
+/* ── Result line ──────────────────────────────────────────────── */
+.tv-result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-dim);
+  opacity: 0.3;
+  padding: 1px 0;
+}
+
+.tv-result-rule {
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--overlay0) 20%, transparent);
+  min-width: 12px;
+}
+
+.tv-result-sep { opacity: 0.3; }
+
+/* ── Error line ───────────────────────────────────────────────── */
+.tv-error {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 1px 0;
+  color: var(--red);
+}
+
+.tv-error-label { font-weight: 600; }
+.tv-error-sep { opacity: 0.5; }
+.tv-error-msg { color: var(--text-dim); }
+
+/* ── Status ───────────────────────────────────────────────────── */
+.tv-status {
+  color: var(--text-dim);
+  opacity: 0.35;
+}
+
+/* ── History separator ────────────────────────────────────────── */
+.tv-sep {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--tv-block-gap) 0;
+  color: var(--text-dim);
+  font-size: var(--tv-font-size);
+  opacity: 0.5;
+}
+
+.tv-sep-rule {
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--overlay0) 40%, transparent);
+}
+
+/* ── Bottom bar ───────────────────────────────────────────────── */
+.tv-bottom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  border-top: 1px solid color-mix(in srgb, var(--overlay0) 12%, transparent);
+  background: var(--crust);
+  font-size: var(--tv-font-size);
+  flex-shrink: 0;
+}
+
+.tv-bottom-model {
+  color: var(--accent);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tv-bottom-sep { color: var(--overlay0); opacity: 0.4; }
+
+.tv-bottom-effort--high { color: var(--green); }
+.tv-bottom-effort--medium { color: var(--yellow); }
+.tv-bottom-effort--low { color: var(--red); }
+
+.tv-bottom-cost { color: var(--green); font-weight: 600; }
+.tv-bottom-stat { color: var(--text-dim); }
+.tv-bottom-warn { color: var(--yellow); }
+.tv-bottom-spacer { flex: 1; }
+
+.tv-bottom-attach {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--overlay0) 30%, transparent);
+  color: var(--text-dim);
+  font-size: var(--tv-font-size);
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tv-bottom-attach:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--overlay0) 60%, transparent);
+}
+
+/* ── Reduced motion ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .tv-assistant--streaming::after { animation: none; opacity: 1; }
+  .tv-tool-status.pending { animation: none; }
+  .tv-thinking-spinner { animation: none; }
+}

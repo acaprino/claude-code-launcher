@@ -39,6 +39,10 @@ const INPUT_STYLE_OPTIONS = [
   { label: "Chat", value: "chat" },
   { label: "Terminal", value: "terminal" },
 ];
+const VIEW_STYLE_OPTIONS = [
+  { label: "Terminal", value: "terminal" },
+  { label: "Chat", value: "chat" },
+];
 
 interface SettingsModalProps {
   settings: Settings;
@@ -55,6 +59,9 @@ export default memo(function SettingsModal({ settings, onClose, onUpdate }: Sett
   }, [onUpdate]);
   const handleInputStyleChange = useCallback((idx: number) => {
     onUpdate({ input_style: idx === 0 ? "chat" : "terminal" });
+  }, [onUpdate]);
+  const handleViewStyleChange = useCallback((idx: number) => {
+    onUpdate({ view_style: idx === 0 ? "terminal" : "chat" });
   }, [onUpdate]);
   // Font state (local until explicit conceptual grouping, but we apply live)
   const [fontFamily, setFontFamily] = useState(settings.font_family || "Cascadia Code");
@@ -286,6 +293,15 @@ export default memo(function SettingsModal({ settings, onClose, onUpdate }: Sett
         {/* Behavior */}
         <div className="settings-section">
           <h3 className="settings-section__title">Behavior</h3>
+          <div className="settings-toggle-row">
+            <span>View style</span>
+            <SegmentedControl
+              options={VIEW_STYLE_OPTIONS}
+              value={settings.view_style ?? "terminal"}
+              onChange={handleViewStyleChange}
+              title="View style"
+            />
+          </div>
           <div className="settings-toggle-row">
             <span>Input style</span>
             <SegmentedControl

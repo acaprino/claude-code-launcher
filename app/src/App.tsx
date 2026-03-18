@@ -7,7 +7,7 @@ import { ProjectsProvider, useProjectsContext } from "./contexts/ProjectsContext
 import TabBar from "./components/TabBar";
 import TitleBar from "./components/TitleBar";
 import TabSidebar from "./components/TabSidebar";
-import ChatView from "./components/ChatView";
+import AgentView from "./components/AgentView";
 import NewTabPage from "./components/NewTabPage";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ShortcutsOverlay from "./components/ShortcutsOverlay";
@@ -411,7 +411,7 @@ function AppContent() {
                 </ErrorBoundary>
               ) : tab.type === "agent" ? (
                 <ErrorBoundary tabId={tab.id} onClose={closeTab}>
-                  <ChatView
+                  <AgentView
                     key={`${tab.id}-${tab.resumeSessionId || ""}-${tab.forkSessionId || ""}`}
                     tabId={tab.id}
                     projectPath={tab.projectPath!}
@@ -425,6 +425,7 @@ function AppContent() {
                     onExit={handleExit}
                     onError={handleError}
                     onTaglineChange={handleTaglineChange}
+                    viewStyle={settings?.view_style ?? "terminal"}
                     inputStyle={inputStyle}
                     hideThinking={settings?.hide_thinking}
                     plugins={pluginPaths}
