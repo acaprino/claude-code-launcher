@@ -364,15 +364,35 @@ impl SidecarManager {
                     // Convert to AgentEvent and send via channel
                     let agent_event = match event.evt.as_str() {
                         "assistant" => AgentEvent::Assistant { text: event.text, streaming: event.streaming },
-                        "tool_use" => AgentEvent::ToolUse { tool: event.tool, input: event.input.unwrap_or(serde_json::Value::Null) },
-                        "tool_result" => AgentEvent::ToolResult { tool: event.tool, output: event.output, success: event.success },
-                        "permission" => AgentEvent::Permission { tool: event.tool, description: event.description, tool_use_id: event.tool_use_id, suggestions: event.permission_suggestions.unwrap_or(serde_json::Value::Array(vec![])) },
+                        "tool_use" => {
+                            log_debug!("agent[{}]: tool_use tool={}", tab_id, event.tool);
+                            AgentEvent::ToolUse { tool: event.tool, input: event.input.unwrap_or(serde_json::Value::Null) }
+                        },
+                        "tool_result" => {
+                            if !event.success {
+                                log_warn!("agent[{}]: tool_result FAILED tool={} output={}", tab_id, event.tool, &event.output[..event.output.len().min(300)]);
+                            } else {
+                                log_debug!("agent[{}]: tool_result ok tool={}", tab_id, event.tool);
+                            }
+                            AgentEvent::ToolResult { tool: event.tool, output: event.output, success: event.success }
+                        },
+                        "permission" => {
+                            log_info!("agent[{}]: permission request tool={} desc={}", tab_id, event.tool, &event.description[..event.description.len().min(200)]);
+                            AgentEvent::Permission { tool: event.tool, description: event.description, tool_use_id: event.tool_use_id, suggestions: event.permission_suggestions.unwrap_or(serde_json::Value::Array(vec![])) }
+                        },
                         "ask_user" => AgentEvent::Ask { questions: event.questions.unwrap_or(serde_json::Value::Array(vec![])) },
                         "input_required" => AgentEvent::InputRequired {},
                         "thinking" => AgentEvent::Thinking { text: event.text },
-                        "status" => AgentEvent::Status { status: event.status, model: event.model, session_id: event.session_id },
+                        "status" => {
+                            log_info!("agent[{}]: status={} model={} session={}", tab_id, event.status, event.model, event.session_id);
+                            AgentEvent::Status { status: event.status, model: event.model, session_id: event.session_id }
+                        },
                         "progress" => AgentEvent::Progress { message: event.message },
-                        "result" => AgentEvent::Result {
+                        "result" => {
+                            log_info!("agent[{}]: result cost=${:.4} tokens={}in/{}out turns={} {}ms is_error={} session={}",
+                                tab_id, event.cost, event.input_tokens, event.output_tokens,
+                                event.turns, event.duration_ms, event.is_error, event.session_id);
+                            AgentEvent::Result {
                             cost: event.cost,
                             input_tokens: event.input_tokens,
                             output_tokens: event.output_tokens,
@@ -383,6 +403,7 @@ impl SidecarManager {
                             is_error: event.is_error,
                             session_id: event.session_id,
                             context_window: event.context_window,
+                            }
                         },
                         "todo" => AgentEvent::Todo { todos: event.todos.unwrap_or(serde_json::Value::Array(vec![])) },
                         "rateLimit" => AgentEvent::RateLimit { utilization: event.utilization },
@@ -413,8 +434,16 @@ impl SidecarManager {
                             duration_ms: event.duration_ms,
                         },
                         "interrupted" => AgentEvent::Interrupted {},
-                        "error" => AgentEvent::Error { code: event.code.as_str().unwrap_or("unknown").to_string(), message: event.message },
-                        "exit" => AgentEvent::Exit { code: event.code.as_i64().unwrap_or_else(|| event.code.as_str().and_then(|s| s.parse().ok()).unwrap_or(-1)) as i32 },
+                        "error" => {
+                            let code_str = event.code.as_str().unwrap_or("unknown").to_string();
+                            log_error!("agent[{}]: ERROR code={} message={}", tab_id, code_str, &event.message[..event.message.len().min(500)]);
+                            AgentEvent::Error { code: code_str, message: event.message }
+                        },
+                        "exit" => {
+                            let exit_code = event.code.as_i64().unwrap_or_else(|| event.code.as_str().and_then(|s| s.parse().ok()).unwrap_or(-1)) as i32;
+                            log_info!("agent[{}]: exit code={}", tab_id, exit_code);
+                            AgentEvent::Exit { code: exit_code }
+                        },
                         "autocomplete" => AgentEvent::Autocomplete {
                             suggestions: event.suggestions.unwrap_or_default(),
                             seq: event.seq,

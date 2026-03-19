@@ -161,15 +161,18 @@ async function handleCreate(cmd) {
   // For plan/default, prompt for everything.
   options.canUseTool = async (toolName, input, opts) => {
     try {
+      log(`canUseTool: tool=${toolName} mode=${permState.mode} toolUseId=${opts.toolUseID}`);
       // Bypass mode: auto-allow everything
       // updatedInput is required by the SDK's internal Zod schema — omitting it causes ZodError
       // which silently denies ALL tools (the SDK catches the error and treats it as deny)
       if (permState.mode === "bypassPermissions") {
+        log(`canUseTool: auto-allow (bypass) tool=${toolName}`);
         return { behavior: "allow", updatedInput: {} };
       }
 
       // AcceptEdits mode: auto-allow file-editing tools
       if (permState.mode === "acceptEdits" && ACCEPT_EDITS_TOOLS.has(toolName)) {
+        log(`canUseTool: auto-allow (acceptEdits) tool=${toolName}`);
         return { behavior: "allow", updatedInput: {} };
       }
 
@@ -195,6 +198,7 @@ async function handleCreate(cmd) {
       });
 
       // Wait for permission response from frontend (timeout after 5 minutes)
+      log(`canUseTool: waiting for user permission tool=${toolName} toolUseId=${opts.toolUseID}`);
       const result = await new Promise((resolve) => {
         const session = sessions.get(tabId);
         if (!session) {
@@ -212,10 +216,14 @@ async function handleCreate(cmd) {
           toolUseId: opts.toolUseID,
         };
       });
+      log(`canUseTool: result tool=${toolName} behavior=${result.behavior}`);
       return result;
     } catch (err) {
-      log(`canUseTool error for ${toolName}:`, err.message);
-      emit({ evt: "error", tabId, code: "permission_error", message: err.message });
+      log(`canUseTool error for ${toolName}: ${err.message}\n${err.stack}`);
+      if (err.name === "ZodError" || err.message?.includes("Zod")) {
+        log(`canUseTool ZodError details: ${JSON.stringify(err.issues || err.errors || err, null, 2)}`);
+      }
+      emit({ evt: "error", tabId, code: "permission_error", message: `canUseTool(${toolName}): ${err.message}` });
       // Fail closed: errors in the permission gate must deny, not allow
       return { behavior: "deny", message: `Internal error: ${err.message}` };
     }
@@ -331,7 +339,10 @@ async function handleCreate(cmd) {
     if (session._interrupted) return;
     // Only report if we're still the active session
     if (sessions.get(tabId) === session) {
-      log(`Error in session ${tabId}:`, err.message);
+      log(`Error in session ${tabId}: ${err.message}\n${err.stack}`);
+      if (err.name === "ZodError" || err.message?.includes("Zod")) {
+        log(`Session ZodError details: ${JSON.stringify(err.issues || err.errors || err, null, 2)}`);
+      }
       emit({ evt: "error", tabId, code: "query_error", message: err.message });
       emit({ evt: "exit", tabId, code: 1 });
       sessions.delete(tabId);
@@ -1036,11 +1047,15 @@ rl.on("close", () => {
 });
 
 process.on("uncaughtException", (err) => {
-  log("Uncaught exception:", err.message, err.stack);
+  log(`FATAL uncaughtException: ${err.message}\n${err.stack}`);
+  if (err.name === "ZodError" || err.message?.includes("Zod")) {
+    log(`ZodError details: ${JSON.stringify(err.issues || err.errors || err, null, 2)}`);
+  }
 });
 
-process.on("unhandledRejection", (err) => {
-  log("Unhandled rejection:", err);
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
+  log(`FATAL unhandledRejection: ${msg}`);
 });
 
 log("Anvil sidecar started");
