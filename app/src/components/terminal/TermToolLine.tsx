@@ -1,10 +1,12 @@
 import { memo, useMemo, useState } from "react";
+import { linkifyPaths } from "../../utils/linkifyPaths";
 
 interface Props {
   tool: string;
   input: unknown;
   output?: string;
   success?: boolean;
+  isLatest?: boolean;
 }
 
 /** Extract a human-readable one-line preview from tool input */
@@ -42,14 +44,19 @@ function shortPath(p: string): string {
   return ".../" + parts.slice(-2).join("/");
 }
 
-export default memo(function TermToolLine({ tool, input, output, success }: Props) {
+export default memo(function TermToolLine({ tool, input, output, success, isLatest }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [outputExpanded, setOutputExpanded] = useState(false);
   const inputStr = useMemo(
     () => typeof input === "string" ? input : JSON.stringify(input, null, 2),
     [input],
   );
   const preview = useMemo(() => extractPreview(tool, input), [tool, input]);
   const pending = success === undefined;
+
+  const outputLines = output ? output.split("\n") : [];
+  const isLongOutput = outputLines.length > 20;
+  const showFullOutput = !isLongOutput || outputExpanded || isLatest;
 
   return (
     <div className={`tv-tool${success === false ? " tv-tool--fail" : ""}`}>
@@ -65,7 +72,26 @@ export default memo(function TermToolLine({ tool, input, output, success }: Prop
         <div className="tv-tool-body">
           <pre className="tv-tool-input">{inputStr}</pre>
           {output && (
-            <pre className={`tv-tool-output${success === false ? " tv-tool-output--fail" : ""}`}>{output}</pre>
+            <>
+              {showFullOutput ? (
+                <pre className={`tv-tool-output${success === false ? " tv-tool-output--fail" : ""}`}>{linkifyPaths(output, "tout-")}</pre>
+              ) : (
+                <div
+                  className="tv-tool-collapsed"
+                  onClick={(e) => { e.stopPropagation(); setOutputExpanded(true); }}
+                >
+                  {"\u25B8"} {outputLines.length} lines — click to expand
+                </div>
+              )}
+              {showFullOutput && isLongOutput && !isLatest && (
+                <div
+                  className="tv-tool-collapsed"
+                  onClick={(e) => { e.stopPropagation(); setOutputExpanded(false); }}
+                >
+                  {"\u25BE"} collapse
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

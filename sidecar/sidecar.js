@@ -19,7 +19,7 @@ const ASK_USER_TIMEOUT_MS = 600_000;   // 10 minutes — multi-step wizard needs
 // coalesced per-tab over a ~16 ms window and flushed as a single JSON-line,
 // drastically reducing serialisation + I/O overhead during streaming.
 
-const BATCH_INTERVAL_MS = 16; // ~1 frame
+const BATCH_INTERVAL_MS = 8; // half-frame — keeps IPC low while reducing perceived latency
 
 // Per-tab accumulators: tabId → { text: string, thinking: string }
 const _batchBuf = new Map();

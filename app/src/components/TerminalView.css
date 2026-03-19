@@ -120,12 +120,12 @@
 
 .tv-assistant--streaming::after {
   content: "\258E";
-  animation: tv-blink 1s step-end infinite;
+  animation: tv-blink 600ms steps(2, jump-none) infinite;
   color: var(--accent);
   font-weight: 300;
 }
 
-@keyframes tv-blink { 50% { opacity: 0; } }
+@keyframes tv-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
 /* ── Tool call (single-line expandable) ──────────────────────── */
 .tv-tool { margin: var(--space-0) 0; }
@@ -205,6 +205,17 @@
 
 .tv-tool-output--fail {
   border-left-color: color-mix(in srgb, var(--red) 30%, transparent);
+}
+
+.tv-tool-collapsed {
+  padding: 2px 0 2px var(--tv-indent, 1rem);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  user-select: none;
+}
+.tv-tool-collapsed:hover {
+  color: var(--accent);
 }
 
 .tv-tool-group { margin: var(--space-0) 0; }
@@ -482,6 +493,19 @@
 .tv-bottom-sidebar-toggle.active {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* ── Clickable file paths ────────────────────────────────────── */
+.tv-path-link {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  color: var(--accent);
+}
+.tv-path-link:hover {
+  text-decoration-style: solid;
+  color: color-mix(in srgb, var(--accent) 80%, white);
 }
 
 /* ── Reduced motion ──────────────────────────────────────────── */

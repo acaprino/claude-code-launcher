@@ -14,6 +14,7 @@ import TermPermPrompt from "./terminal/TermPermPrompt";
 import TermThinkingLine from "./terminal/TermThinkingLine";
 import TermErrorLine from "./terminal/TermErrorLine";
 import { IconPlus, IconSidebar } from "./Icons";
+import { linkifyPaths } from "../utils/linkifyPaths";
 import "./TerminalView.css";
 
 /** Render inline markdown bold/italic/code in plain text */
@@ -25,13 +26,13 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
   let match: RegExpExecArray | null;
   let key = 0;
   while ((match = re.exec(text)) !== null) {
-    if (match.index > last) parts.push(text.slice(last, match.index));
+    if (match.index > last) parts.push(...linkifyPaths(text.slice(last, match.index), `md${last}-`));
     if (match[2]) parts.push(<strong key={key++}>{match[2]}</strong>);
     else if (match[3]) parts.push(<em key={key++}>{match[3]}</em>);
     else if (match[4]) parts.push(<code key={key++} className="tv-inline-code">{match[4]}</code>);
     last = match.index + match[0].length;
   }
-  if (last < text.length) parts.push(text.slice(last));
+  if (last < text.length) parts.push(...linkifyPaths(text.slice(last), `md${last}-`));
   return parts;
 }
 
@@ -42,7 +43,7 @@ function AssistantText({ text }: { text: string }) {
     <pre className="tv-assistant">
       {lines.map((line, i) => (
         <span key={i}>
-          {line.includes("**") || line.includes("`") ? renderInlineMarkdown(line) : line}
+          {line.includes("**") || line.includes("`") ? renderInlineMarkdown(line) : linkifyPaths(line, `l${i}-`)}
           {i < lines.length - 1 ? "\n" : null}
         </span>
       ))}
@@ -101,6 +102,7 @@ export default memo(function TerminalView(props: SessionViewProps) {
   // Sticky auto-scroll: stay pinned to bottom unless user scrolls up
   const stickyRef = useRef(true);
   const lastScrollTopRef = useRef(0);
+  const lastCtrlCRef = useRef(0);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -161,11 +163,23 @@ export default memo(function TerminalView(props: SessionViewProps) {
     return () => window.removeEventListener("focus", handleWindowFocus);
   }, [isActive]);
 
-  // Keyboard shortcuts — Ctrl+C copies selection or interrupts agent
+  // Keyboard shortcuts — Ctrl+C copies selection or interrupts agent (double = kill)
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.ctrlKey && e.key === "c") {
+      // 1. Copy if text selected
       if (window.getSelection()?.toString()) return;
-      handleInterrupt();
+      // 2. If processing: interrupt (double Ctrl+C within 500ms sends second interrupt to kill)
+      if (inputState === "processing") {
+        const now = Date.now();
+        if (now - lastCtrlCRef.current < 500) {
+          handleInterrupt(); // second interrupt forces kill
+        } else {
+          handleInterrupt();
+        }
+        lastCtrlCRef.current = now;
+        return;
+      }
+      // 3. If idle — let ChatInput handle clearing (event bubbles from textarea)
     } else if (e.ctrlKey && e.key === "b") {
       e.preventDefault();
       if (inputState === "processing") {
@@ -257,8 +271,15 @@ export default memo(function TerminalView(props: SessionViewProps) {
                   return <div className="tv-user"><span className="tv-user-prompt">{"\u276F"}</span>{msg.text}</div>;
                 case "assistant":
                   return <AssistantText text={msg.text} />;
-                case "tool":
-                  return <TermToolLine tool={msg.tool} input={msg.input} output={msg.output} success={msg.success} />;
+                case "tool": {
+                  const isLastTool = (() => {
+                    for (let j = virtualRow.index + 1; j < visibleItems.length; j++) {
+                      if (visibleItems[j].role === "tool" || visibleItems[j].role === "tool-group") return false;
+                    }
+                    return true;
+                  })();
+                  return <TermToolLine tool={msg.tool} input={msg.input} output={msg.output} success={msg.success} isLatest={isLastTool} />;
+                }
                 case "permission":
                   return <TermPermPrompt tool={msg.tool} description={msg.description} suggestions={msg.suggestions} resolved={msg.resolved} allowed={msg.allowed} onRespond={(allow, sugg) => handlePermissionRespond(msg.id, allow, sugg)} />;
                 case "ask":

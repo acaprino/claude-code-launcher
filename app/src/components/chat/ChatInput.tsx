@@ -41,6 +41,11 @@ export default memo(function ChatInput({ onSubmit, onCommand, processing, isActi
   const [menuFilter, setMenuFilter] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Command history (bash-style Up/Down)
+  const historyRef = useRef<string[]>([]);
+  const historyIdxRef = useRef(-1); // -1 = not navigating
+  const draftRef = useRef(""); // saves current input when entering history
+
   // Auto-focus when active
   useEffect(() => {
     if (isActive) {
@@ -81,6 +86,15 @@ export default memo(function ChatInput({ onSubmit, onCommand, processing, isActi
   const handleSubmit = useCallback(() => {
     const sanitized = sanitizeInput(text.trim());
     if (!sanitized && attachments.length === 0) return;
+    // Push to command history (avoid consecutive duplicates, cap at 100)
+    if (sanitized) {
+      const h = historyRef.current;
+      if (h.length === 0 || h[h.length - 1] !== sanitized) {
+        h.push(sanitized);
+        if (h.length > 100) h.shift();
+      }
+      historyIdxRef.current = -1;
+    }
     onSubmit(sanitized, attachments);
     setText("");
     setAttachments([]);
@@ -94,6 +108,7 @@ export default memo(function ChatInput({ onSubmit, onCommand, processing, isActi
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setText(val);
+    historyIdxRef.current = -1; // reset history navigation on manual typing
 
     // Detect / command trigger (/ at start of text or after whitespace)
     const slashIdx = val.lastIndexOf("/");
@@ -124,12 +139,65 @@ export default memo(function ChatInput({ onSubmit, onCommand, processing, isActi
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Ctrl+C: clear input line when idle (terminal behavior)
+    if (e.key === "c" && e.ctrlKey && !processing && text.trim()) {
+      e.preventDefault();
+      setText("");
+      historyIdxRef.current = -1;
+      return;
+    }
+
     // Let menus handle arrow keys and Enter when open
     if (showCommandMenu || showMentionMenu) {
       if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(e.key)) {
         return; // Handled by CommandMenu/MentionMenu keydown listener
       }
     }
+
+    // Command history — Up arrow (recall previous)
+    if (e.key === "ArrowUp" && !showCommandMenu && !showMentionMenu) {
+      const el = textareaRef.current;
+      if (!el) return;
+      const cursorPos = el.selectionStart;
+      const textBefore = text.slice(0, cursorPos);
+      if (textBefore.includes("\n")) return; // not on first line
+
+      const h = historyRef.current;
+      if (h.length === 0) return;
+      e.preventDefault();
+
+      if (historyIdxRef.current === -1) {
+        draftRef.current = text;
+        historyIdxRef.current = h.length - 1;
+      } else if (historyIdxRef.current > 0) {
+        historyIdxRef.current--;
+      } else {
+        return; // at oldest entry
+      }
+      setText(h[historyIdxRef.current]);
+    }
+
+    // Command history — Down arrow (go forward)
+    if (e.key === "ArrowDown" && !showCommandMenu && !showMentionMenu) {
+      const el = textareaRef.current;
+      if (!el) return;
+      const cursorPos = el.selectionStart;
+      const textAfter = text.slice(cursorPos);
+      if (textAfter.includes("\n")) return; // not on last line
+
+      if (historyIdxRef.current === -1) return; // not in history mode
+      e.preventDefault();
+
+      const h = historyRef.current;
+      if (historyIdxRef.current < h.length - 1) {
+        historyIdxRef.current++;
+        setText(h[historyIdxRef.current]);
+      } else {
+        historyIdxRef.current = -1;
+        setText(draftRef.current);
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (hasContent) handleSubmit();
