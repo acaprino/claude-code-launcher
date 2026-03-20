@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
@@ -152,11 +152,16 @@ pub struct SidecarManager {
     channels: ChannelMap,
     oneshots: OneshotMap,
     available: Arc<AtomicBool>,
+    /// Generation counter — incremented on each start_sidecar. Old reader threads
+    /// only set available=false if their generation matches, preventing stale clobber.
+    generation: Arc<AtomicU64>,
     _process: Mutex<Option<Child>>,
     /// Win32 Job Object — kills all child processes when closed.
     _job: Mutex<Option<JobHandle>>,
     /// Cached node path for auto-restart.
     node_path: Mutex<Option<String>>,
+    /// Mutual exclusion for restart — prevents concurrent try_restart from double-spawning.
+    restart_lock: Mutex<()>,
 }
 
 /// RAII wrapper for a Win32 Job Object handle.
@@ -176,9 +181,11 @@ impl SidecarManager {
             channels: Arc::new(RwLock::new(HashMap::new())),
             oneshots: Arc::new(Mutex::new(HashMap::new())),
             available: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
             _process: Mutex::new(None),
             _job: Mutex::new(None),
             node_path: Mutex::new(None),
+            restart_lock: Mutex::new(()),
         };
 
         // Try to find node.exe and start the sidecar
@@ -316,6 +323,8 @@ impl SidecarManager {
         let channels = Arc::clone(&self.channels);
         let oneshots = Arc::clone(&self.oneshots);
         let available = Arc::clone(&self.available);
+        let my_gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = Arc::clone(&self.generation);
         thread::Builder::new()
             .name("sidecar-stdout".into())
             .spawn(move || {
@@ -479,10 +488,15 @@ impl SidecarManager {
                         }
                     }
                 }
-                // Sidecar stdout closed — mark unavailable and drop all pending oneshots
-                log_warn!("sidecar: stdout reader thread exiting — marking unavailable");
-                available.store(false, Ordering::SeqCst);
-                oneshots.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                // Sidecar stdout closed — only mark unavailable if we're still the current generation.
+                // A newer sidecar may have started via try_restart; don't clobber its available flag.
+                if generation.load(Ordering::SeqCst) == my_gen {
+                    log_warn!("sidecar: stdout reader thread exiting — marking unavailable");
+                    available.store(false, Ordering::SeqCst);
+                    oneshots.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                } else {
+                    log_info!("sidecar: old stdout reader thread exiting (superseded by restart)");
+                }
             })
             .map_err(|e| format!("Failed to spawn stdout reader: {e}"))?;
 
@@ -515,6 +529,12 @@ impl SidecarManager {
         if self.available() {
             return true;
         }
+        // Mutual exclusion: prevent concurrent callers from double-spawning
+        let _guard = self.restart_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // Re-check after acquiring lock — another thread may have restarted already
+        if self.available() {
+            return true;
+        }
         let node_path = self.node_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let Some(node_path) = node_path else {
             log_warn!("sidecar: cannot restart — no node path cached");
@@ -525,8 +545,15 @@ impl SidecarManager {
         *self.stdin.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self._process.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self._job.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        // Drop stale oneshots — they'll never get responses from the dead sidecar
+        // Drop stale oneshots and channels — they'll never get responses from the dead sidecar
         self.oneshots.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.channels.write().unwrap_or_else(|e| e.into_inner()).clear();
+
+        // Re-check deps in case node_modules were deleted while running
+        if let Err(e) = self.ensure_deps(&node_path) {
+            log_error!("sidecar: restart deps check failed: {e}");
+            return false;
+        }
 
         match self.start_sidecar(&node_path) {
             Ok(()) => {

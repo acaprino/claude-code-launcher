@@ -26,6 +26,9 @@ const FILE_TAG_RE = /<file\s+path="([^"]*)"[^>]*>\n?([\s\S]{0,1048576}?)\n?<\/fi
 const IMAGE_TAG_RE = /\[Attached image: ([^\]]+)\]/;
 const FALLBACK_TAG_RE = /\[Attached: ([^\]]+)\]/;
 
+/** Escalating delays (ms) for scroll-to-bottom retries after layout shifts from markdown rendering */
+const SCROLL_RETRY_DELAYS_MS = [50, 150, 400, 800];
+
 const ATTACHMENT_RE = new RegExp(
   `(?:${FILE_TAG_RE.source})|(?:${IMAGE_TAG_RE.source})|(?:${FALLBACK_TAG_RE.source})`,
   "g",
@@ -197,7 +200,7 @@ export default memo(function ChatView(props: SessionViewProps) {
       stickyRef.current = true;
       scrollToBottom();
       const rafId = requestAnimationFrame(scrollToBottom);
-      const timeoutIds = [50, 150, 400, 800].map(ms => window.setTimeout(scrollToBottom, ms));
+      const timeoutIds = SCROLL_RETRY_DELAYS_MS.map(ms => window.setTimeout(scrollToBottom, ms));
       return () => {
         cancelAnimationFrame(rafId);
         timeoutIds.forEach(clearTimeout);

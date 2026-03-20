@@ -150,6 +150,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const exitedRef = useRef(false);
   const agentStartedRef = useRef(false);
+  const sessionIdReportedRef = useRef(false);
   const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tabIdRef = useRef(tabId);
   tabIdRef.current = tabId;
@@ -340,6 +341,11 @@ export function useSessionController(props: SessionControllerProps): SessionCont
       } else if (event.type === "result") {
         finalizeStreaming();
         finalizeThinking();
+        // Fallback: capture session ID from result if init event was missed
+        if (!sessionIdReportedRef.current && event.sessionId) {
+          sessionIdReportedRef.current = true;
+          onSessionCreatedRef.current(tabIdRef.current, event.sessionId);
+        }
         dispatchStats({
           type: "result",
           inputTokens: event.inputTokens || 0,
@@ -444,6 +450,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         if (event.type === "status") {
           // Capture the real SDK session ID from the init event
           if (event.status === "init" && event.sessionId) {
+            sessionIdReportedRef.current = true;
             onSessionCreatedRef.current(tabIdRef.current, event.sessionId);
           }
           if (event.status && event.status !== "null" && event.status !== "started") {

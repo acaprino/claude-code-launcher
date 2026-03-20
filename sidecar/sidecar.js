@@ -1058,15 +1058,17 @@ rl.on("close", () => {
 process.on("uncaughtException", (err) => {
   log(`uncaughtException: ${err.message}\n${err.stack}`);
   if (err.name === "ZodError" || err.message?.includes("Zod")) {
-    log(`ZodError details: ${JSON.stringify(err.issues || err.errors || err, null, 2)}`);
+    log(`ZodError details (non-fatal): ${JSON.stringify(err.issues || err.errors || err, null, 2)}`);
+    return; // ZodErrors are non-fatal SDK schema issues — safe to continue
   }
-  // Don't exit — allow sidecar to continue serving other sessions.
-  // Fatal errors (broken stdin/stdout) will naturally terminate via stream end.
+  // Unknown exceptions may corrupt shared state — exit for clean restart via try_restart
+  log("Exiting due to unrecoverable exception");
+  process.exit(1);
 });
 
 process.on("unhandledRejection", (reason) => {
   const msg = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
-  log(`FATAL unhandledRejection: ${msg}`);
+  log(`unhandledRejection: ${msg}`);
 });
 
 log("Anvil sidecar started");
