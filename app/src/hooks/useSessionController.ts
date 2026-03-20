@@ -2,17 +2,25 @@
  * useSessionController — extracts all session lifecycle and interaction logic
  * from ChatView into a reusable hook, so both ChatView and TerminalView can
  * share the same agent plumbing.
+ *
+ * Sub-hooks:
+ * - useStreamingText — streaming text ref management + rAF ticks
+ * - useThinkingText — thinking text ref management + rAF ticks
+ * - useAgentTasks — agent task lifecycle + rAF-batched progress
  */
 import { useCallback, useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { spawnAgent, resumeAgent, forkAgent, sendAgentMessage, killAgent, interruptAgent, respondPermission, respondAskUser, refreshCommands, runClaudeCommand, getAgentMessages, setAgentPermMode } from "./useAgentSession";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { MODELS, EFFORTS, PERM_MODES } from "../types";
-import type { AgentEvent, AgentTask, Attachment, ChatMessage, PermissionSuggestion, SlashCommand, AgentInfoSDK } from "../types";
+import type { AgentEvent, Attachment, ChatMessage, PermissionSuggestion, SlashCommand, AgentInfoSDK } from "../types";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { sanitizeInput } from "../utils/sanitizeInput";
 import { notifyAttention } from "../utils/notify";
 import type { Command } from "../components/chat/CommandMenu";
+import { useStreamingText } from "./useStreamingText";
+import { useThinkingText } from "./useThinkingText";
+import { useAgentTasks } from "./useAgentTasks";
 
 // ── Session stats reducer ─────────────────────────────────────────
 interface SessionStats {
@@ -95,7 +103,7 @@ export interface SessionController {
   deferredMessages: ChatMessage[];
   inputState: "idle" | "awaiting_input" | "processing";
   stats: SessionStats;
-  agentTasks: AgentTask[];
+  agentTasks: import("../types").AgentTask[];
   sdkCommands: SlashCommand[];
   sdkAgents: AgentInfoSDK[];
   hasUnresolvedPermission: boolean;
@@ -135,7 +143,6 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   const [stats, dispatchStats] = useReducer(statsReducer, INITIAL_STATS);
   const [sdkCommands, setSdkCommands] = useState<SlashCommand[]>([]);
   const [sdkAgents, setSdkAgents] = useState<AgentInfoSDK[]>([]);
-  const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
   const [droppedFiles, setDroppedFiles] = useState<string[]>([]);
   const messageQueueRef = useRef<string[]>([]);
   const [queueLength, setQueueLength] = useState(0);
@@ -145,9 +152,6 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     inputStateRef.current = s;
     setInputStateRaw(s);
   }, []);
-  const agentTasksRef = useRef<AgentTask[]>([]);
-  const taskFlushRafRef = useRef(0);
-  const agentTaskCounterRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const exitedRef = useRef(false);
   const agentStartedRef = useRef(false);
@@ -159,17 +163,10 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   const idCounterRef = useRef(0);
   const nextId = () => `msg-${tabId}-${++idCounterRef.current}`;
 
-  // Streaming text refs
-  const streamingTextRef = useRef("");
-  const streamingIdRef = useRef<string | null>(null);
-  const [streamingTick, setStreamingTick] = useState(0);
-  const rafIdRef = useRef(0);
-
-  // Thinking text refs
-  const thinkingTextRef = useRef("");
-  const thinkingIdRef = useRef<string | null>(null);
-  const thinkingRafRef = useRef(0);
-  const [thinkingTick, setThinkingTick] = useState(0);
+  // Sub-hooks
+  const streaming = useStreamingText();
+  const thinking = useThinkingText();
+  const agentTasksHook = useAgentTasks();
 
   // Callback refs to avoid stale closures
   const onSessionCreatedRef = useRef(onSessionCreated);
@@ -186,12 +183,6 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   isActiveRef.current = isActive;
 
   // ── Agent lifecycle ─────────────────────────────────────────────
-  // Contract: this effect runs once on mount. Config values (modelIdx, effortIdx,
-  // systemPrompt, plugins, resumeSessionId, forkSessionId) are captured at mount
-  // time only. The parent MUST use a React key that changes when these values
-  // change to force a full remount with fresh values.
-  // permModeIdx is synced to the sidecar live via a separate effect — no remount needed.
-  // Callback props are indirected through refs above.
   useEffect(() => {
     const pendingKill = _pendingKills.get(tabId);
     if (pendingKill) {
@@ -207,49 +198,18 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     const permMode = PERM_MODES[permModeIdx]?.sdk || "plan";
     permModeIdxRef.current = permModeIdx;
 
-    const finalizeStreaming = () => {
-      if (!streamingIdRef.current) return;
-      const id = streamingIdRef.current;
-      const text = streamingTextRef.current;
-      streamingIdRef.current = null;
-      streamingTextRef.current = "";
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-      setMessages(prev => [...prev, { id, role: "assistant", text, streaming: false, timestamp: Date.now() }]);
-    };
-
-    const finalizeThinking = () => {
-      if (!thinkingIdRef.current) return;
-      const id = thinkingIdRef.current;
-      const text = thinkingTextRef.current;
-      thinkingIdRef.current = null;
-      thinkingTextRef.current = "";
-      cancelAnimationFrame(thinkingRafRef.current);
-      thinkingRafRef.current = 0;
-      setMessages(prev => [...prev, { id, role: "thinking", text, timestamp: Date.now() }]);
-    };
+    const finalizeStreaming = () => streaming.finalize(setMessages);
+    const finalizeThinking = () => thinking.finalize(setMessages);
 
     const handleAgentEvent = (event: AgentEvent) => {
       if (cancelled) return;
 
       if (event.type === "assistant") {
         if (event.streaming) {
-          // If thinking was active, finalize it before appending more text
-          if (thinkingIdRef.current) finalizeThinking();
-          if (!streamingIdRef.current) {
-            streamingIdRef.current = nextId();
-            streamingTextRef.current = event.text;
-          } else {
-            streamingTextRef.current += event.text;
-          }
-          if (!rafIdRef.current) {
-            rafIdRef.current = requestAnimationFrame(() => {
-              rafIdRef.current = 0;
-              setStreamingTick(t => t + 1);
-            });
-          }
+          if (thinking.idRef.current) finalizeThinking();
+          streaming.append(event.text, nextId());
         } else {
-          if (streamingIdRef.current) {
+          if (streaming.idRef.current) {
             finalizeStreaming();
           } else {
             setMessages(prev => [...prev, { id: nextId(), role: "assistant", text: event.text, streaming: false, timestamp: Date.now() }]);
@@ -266,18 +226,11 @@ export function useSessionController(props: SessionControllerProps): SessionCont
             ? (inp?.file_path || "").split(/[/\\]/).pop() || ""
             : "";
         onTaglineChangeRef.current?.(tabIdRef.current, detail ? `${event.tool}: ${detail}` : event.tool);
-        // Synthesize AgentTask for Agent tool invocations
         if (event.tool === "Agent") {
-          const taskId = `agent-${++agentTaskCounterRef.current}`;
           const prompt = inp?.prompt || inp?.task || "";
           const desc = prompt ? prompt.slice(0, 120) : "Subagent";
           const taskType = inp?.subagent_type || "agent";
-          const newTask: AgentTask = {
-            taskId, description: desc, taskType,
-            status: "running", totalTokens: 0, toolUses: 0, durationMs: 0, lastToolName: "", summary: "",
-          };
-          agentTasksRef.current = [...agentTasksRef.current, newTask];
-          setAgentTasks(agentTasksRef.current);
+          agentTasksHook.startTask(`agent-${Date.now()}`, desc, taskType);
         }
       } else if (event.type === "toolResult") {
         setMessages(prev => {
@@ -291,22 +244,18 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           }
           return prev;
         });
-        // Complete synthesized AgentTask when Agent tool finishes
         if (event.tool === "Agent") {
-          const idx = agentTasksRef.current.findLastIndex(t => t.status === "running" && t.taskId.startsWith("agent-"));
-          if (idx >= 0) {
-            const output = typeof event.output === "string" ? event.output : JSON.stringify(event.output ?? "");
-            agentTasksRef.current = agentTasksRef.current.map((t, i) => i === idx ? {
-              ...t,
-              status: event.success ? "completed" : "failed",
-              summary: output.slice(0, 100),
-            } : t);
-            setAgentTasks(agentTasksRef.current);
+          const output = typeof event.output === "string" ? event.output : JSON.stringify(event.output ?? "");
+          // Find last running agent task
+          let runningTaskId = "";
+          for (let i = agentTasksHook.tasks.length - 1; i >= 0; i--) {
+            if (agentTasksHook.tasks[i].status === "running" && agentTasksHook.tasks[i].taskId.startsWith("agent-")) { runningTaskId = agentTasksHook.tasks[i].taskId; break; }
+          }
+          if (runningTaskId) {
+            agentTasksHook.completeTask(runningTaskId, event.success, output.slice(0, 100));
           }
         }
       } else if (event.type === "permission") {
-        // In bypass mode, auto-approve any permission the SDK still emits
-        // Use ref (not closure) so live perm mode changes are respected
         if (PERM_MODES[permModeIdxRef.current]?.sdk === "bypassPermissions") {
           respondPermission(tabId, true, event.toolUseId).catch((err) => console.debug("[session] auto-approve permission failed:", err));
           setMessages(prev => [...prev, {
@@ -325,10 +274,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
       } else if (event.type === "ask") {
         finalizeStreaming();
         finalizeThinking();
-        setMessages(prev => [...prev, {
-          id: nextId(), role: "ask", questions: event.questions,
-          timestamp: Date.now(),
-        }]);
+        setMessages(prev => [...prev, { id: nextId(), role: "ask", questions: event.questions, timestamp: Date.now() }]);
         setInputState("processing");
         onTaglineChangeRef.current?.(tabIdRef.current, "Question");
         notifyAttention("Question", "Claude is asking a question", !isActiveRef.current).catch((err) => console.debug("[session] ask notification failed:", err));
@@ -336,7 +282,6 @@ export function useSessionController(props: SessionControllerProps): SessionCont
       } else if (event.type === "inputRequired") {
         finalizeStreaming();
         finalizeThinking();
-        // Drain message queue: if there are queued messages, send the next one
         if (messageQueueRef.current.length > 0) {
           const next = messageQueueRef.current.shift()!;
           setQueueLength(messageQueueRef.current.length);
@@ -349,40 +294,21 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         }
         onTaglineChangeRef.current?.(tabIdRef.current, "");
       } else if (event.type === "thinking") {
-        // Don't finalize streaming text here — text and thinking can interleave
-        // within the same assistant turn. Finalizing would split one message into
-        // two separate bubbles with a thinking block between them.
-        if (!thinkingIdRef.current) {
-          thinkingIdRef.current = nextId();
-          thinkingTextRef.current = event.text;
-        } else {
-          thinkingTextRef.current += event.text;
-        }
-        if (!thinkingRafRef.current) {
-          thinkingRafRef.current = requestAnimationFrame(() => {
-            thinkingRafRef.current = 0;
-            setThinkingTick(t => t + 1);
-          });
-        }
+        thinking.append(event.text, nextId());
         onTaglineChangeRef.current?.(tabIdRef.current, "Thinking...");
       } else if (event.type === "result") {
         finalizeStreaming();
         finalizeThinking();
-        // Fallback: capture session ID from result if init event was missed
         if (!sessionIdReportedRef.current && event.sessionId) {
           sessionIdReportedRef.current = true;
           onSessionCreatedRef.current(tabIdRef.current, event.sessionId);
         }
         dispatchStats({
           type: "result",
-          inputTokens: event.inputTokens || 0,
-          outputTokens: event.outputTokens || 0,
-          cacheReadTokens: event.cacheReadTokens || 0,
-          cacheWriteTokens: event.cacheWriteTokens || 0,
-          cost: event.cost || 0,
-          turns: event.turns || 0,
-          durationMs: event.durationMs || 0,
-          contextWindow: event.contextWindow || 0,
+          inputTokens: event.inputTokens || 0, outputTokens: event.outputTokens || 0,
+          cacheReadTokens: event.cacheReadTokens || 0, cacheWriteTokens: event.cacheWriteTokens || 0,
+          cost: event.cost || 0, turns: event.turns || 0,
+          durationMs: event.durationMs || 0, contextWindow: event.contextWindow || 0,
         });
         setMessages(prev => [
           ...prev.map(m => m.role === "thinking" && !m.ended ? { ...m, ended: true } as ChatMessage : m),
@@ -407,20 +333,11 @@ export function useSessionController(props: SessionControllerProps): SessionCont
       } else if (event.type === "interrupted") {
         finalizeStreaming();
         finalizeThinking();
-        // Clear queue and background state — interrupted session starts fresh
         messageQueueRef.current = [];
         setQueueLength(0);
         setBackgrounded(false);
-        // Interrupted — session will be resumed by sidecar, just update UI
         setMessages(prev => [...prev, { id: nextId(), role: "status", status: "Interrupted", model: "", timestamp: Date.now() }]);
-        // Don't change inputState — the resumed session will emit input_required or start processing
-        // Mark any running synthesized agent tasks as stopped
-        if (agentTasksRef.current.some(t => t.status === "running")) {
-          agentTasksRef.current = agentTasksRef.current.map(t =>
-            t.status === "running" ? { ...t, status: "stopped" as const } : t
-          );
-          setAgentTasks(agentTasksRef.current);
-        }
+        agentTasksHook.stopAll();
       } else if (event.type === "exit") {
         finalizeStreaming();
         finalizeThinking();
@@ -443,53 +360,23 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           return [...prev, { id: nextId(), role: "todo", todos: event.todos, timestamp: Date.now() }];
         });
       } else if (event.type === "taskStarted") {
-        if (!agentTasksRef.current.some(t => t.taskId === event.taskId)) {
-          const newTask: AgentTask = {
-            taskId: event.taskId, description: event.description, taskType: event.taskType,
-            status: "running", totalTokens: 0, toolUses: 0, durationMs: 0, lastToolName: "", summary: "",
-          };
-          agentTasksRef.current = [...agentTasksRef.current, newTask];
-          setAgentTasks(agentTasksRef.current);
-        }
+        agentTasksHook.onTaskStarted(event.taskId, event.description, event.taskType);
       } else if (event.type === "taskProgress") {
-        agentTasksRef.current = agentTasksRef.current.map(t => t.taskId === event.taskId ? {
-          ...t, description: event.description || t.description,
-          totalTokens: event.totalTokens, toolUses: event.toolUses,
-          durationMs: event.durationMs, lastToolName: event.lastToolName,
-          summary: event.summary || t.summary,
-        } : t);
-        if (!taskFlushRafRef.current) {
-          taskFlushRafRef.current = requestAnimationFrame(() => {
-            taskFlushRafRef.current = 0;
-            setAgentTasks(agentTasksRef.current);
-          });
-        }
+        agentTasksHook.onTaskProgress(event.taskId, event.description, event.totalTokens, event.toolUses, event.durationMs, event.lastToolName, event.summary);
       } else if (event.type === "taskNotification") {
-        const validStatuses = new Set<AgentTask["status"]>(["completed", "failed", "stopped"]);
-        const status = validStatuses.has(event.status) ? event.status : "stopped";
-        agentTasksRef.current = agentTasksRef.current.map(t => t.taskId === event.taskId ? {
-          ...t, status,
-          summary: event.summary || t.summary,
-          totalTokens: event.totalTokens,
-          toolUses: event.toolUses,
-          durationMs: event.durationMs,
-        } : t);
-        setAgentTasks(agentTasksRef.current);
+        agentTasksHook.onTaskNotification(event.taskId, event.status, event.summary, event.totalTokens, event.toolUses, event.durationMs);
       } else if (event.type === "rateLimit") {
         dispatchStats({ type: "rateLimit", utilization: event.utilization });
       } else if (event.type === "commandsInit") {
         setSdkCommands(event.commands);
         setSdkAgents(event.agents);
-      } else if (event.type === "autocomplete" || event.type === "status") {
-        if (event.type === "status") {
-          // Capture the real SDK session ID from the init event
-          if (event.status === "init" && event.sessionId) {
-            sessionIdReportedRef.current = true;
-            onSessionCreatedRef.current(tabIdRef.current, event.sessionId);
-          }
-          if (event.status && event.status !== "null" && event.status !== "started") {
-            setMessages(prev => [...prev, { id: nextId(), role: "status", status: event.status, model: event.model, timestamp: Date.now() }]);
-          }
+      } else if (event.type === "status") {
+        if (event.status === "init" && event.sessionId) {
+          sessionIdReportedRef.current = true;
+          onSessionCreatedRef.current(tabIdRef.current, event.sessionId);
+        }
+        if (event.status && event.status !== "null" && event.status !== "started") {
+          setMessages(prev => [...prev, { id: nextId(), role: "status", status: event.status, model: event.model, timestamp: Date.now() }]);
         }
       }
 
@@ -507,8 +394,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           const data = await getAgentMessages(historySessionId, projectPath);
           if (cancelled) return;
           const sdkMsgs = (data as Record<string, unknown>)?.messages;
-          if (!Array.isArray(sdkMsgs) || !sdkMsgs.length) { /* no history */ }
-          else {
+          if (Array.isArray(sdkMsgs) && sdkMsgs.length) {
             const historyMsgs: ChatMessage[] = [];
             for (const m of sdkMsgs) {
               const role = m?.message?.role;
@@ -569,18 +455,9 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     return () => {
       cancelled = true;
       if (channelRef) channelRef.onmessage = null;
-      streamingIdRef.current = null;
-      streamingTextRef.current = "";
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-      thinkingIdRef.current = null;
-      thinkingTextRef.current = "";
-      cancelAnimationFrame(thinkingRafRef.current);
-      thinkingRafRef.current = 0;
-      cancelAnimationFrame(taskFlushRafRef.current);
-      taskFlushRafRef.current = 0;
-      agentTasksRef.current = [];
-      agentTaskCounterRef.current = 0;
+      streaming.cleanup();
+      thinking.cleanup();
+      agentTasksHook.cleanup();
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
         refreshIntervalRef.current = null;
@@ -639,16 +516,13 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     setMessages(prev => [...prev, { id: `msg-${tabId}-${++idCounterRef.current}`, role: "user", text: fullText, timestamp: Date.now() }]);
 
     if (inputStateRef.current === "awaiting_input") {
-      // Normal send — transition to processing
       setInputState("processing");
       sendAgentMessage(tabId, sanitized).catch((err) => {
         setMessages(prev => [...prev, { id: `msg-${tabId}-${++idCounterRef.current}`, role: "error", code: "send", message: String(err), timestamp: Date.now() }]);
       });
     } else {
-      // Already processing — queue locally, will be sent when inputRequired fires
       messageQueueRef.current.push(sanitized);
       setQueueLength(messageQueueRef.current.length);
-      // Typing during processing implies backgrounding
       setBackgrounded(true);
     }
   }, [tabId]);
@@ -658,7 +532,6 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   const handlePermissionRespond = useCallback((msgId: string, allow: boolean, suggestions?: PermissionSuggestion[]) => {
     if (respondedIdsRef.current.has(msgId)) return;
     respondedIdsRef.current.add(msgId);
-    // Find the toolUseId from the permission message before updating
     let toolUseId = "";
     setMessages(prev => {
       const msg = prev.find(m => m.id === msgId && m.role === "permission");
@@ -841,11 +714,11 @@ export function useSessionController(props: SessionControllerProps): SessionCont
 
   return {
     messages, displayItems, deferredMessages,
-    inputState, stats, agentTasks, sdkCommands, sdkAgents,
+    inputState, stats, agentTasks: agentTasksHook.tasks, sdkCommands, sdkAgents,
     hasUnresolvedPermission,
     queueLength, backgrounded,
-    streamingTextRef, streamingIdRef, streamingTick,
-    thinkingTextRef, thinkingIdRef, thinkingTick,
+    streamingTextRef: streaming.textRef, streamingIdRef: streaming.idRef, streamingTick: streaming.tick,
+    thinkingTextRef: thinking.textRef, thinkingIdRef: thinking.idRef, thinkingTick: thinking.tick,
     messagesEndRef,
     handleSubmit, handlePermissionRespond, handleAskUserRespond,
     handleCommand, handleInterrupt, handleBackground,
