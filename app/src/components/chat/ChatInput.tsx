@@ -1,4 +1,4 @@
-import { memo, useRef, useEffect, useState, useCallback } from "react";
+import { memo, useRef, useEffect, useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { sanitizeInput } from "../../utils/sanitizeInput";
@@ -33,7 +33,11 @@ function extToType(name: string): "file" | "image" {
   return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext) ? "image" : "file";
 }
 
-export default memo(function ChatInput({ onSubmit, onCommand, processing, isActive, inputStyle = "chat", sdkCommands, sdkAgents, droppedFiles, onDroppedFilesConsumed, queueLength = 0 }: Props) {
+export interface ChatInputHandle {
+  focus(): void;
+}
+
+function ChatInputInner({ onSubmit, onCommand, processing, isActive, inputStyle = "chat", sdkCommands, sdkAgents, droppedFiles, onDroppedFilesConsumed, queueLength = 0 }: Props, ref: React.Ref<ChatInputHandle>) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showCommandMenu, setShowCommandMenu] = useState(false);
@@ -41,17 +45,23 @@ export default memo(function ChatInput({ onSubmit, onCommand, processing, isActi
   const [menuFilter, setMenuFilter] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  useImperativeHandle(ref, () => ({
+    focus() { textareaRef.current?.focus(); },
+  }), []);
+
   // Command history (bash-style Up/Down)
   const historyRef = useRef<string[]>([]);
   const historyIdxRef = useRef(-1); // -1 = not navigating
   const draftRef = useRef(""); // saves current input when entering history
 
-  // Auto-focus when active
+  // Auto-focus when active or when transitioning from processing to ready
   useEffect(() => {
-    if (isActive) {
+    if (isActive && !processing) {
+      const active = document.activeElement;
+      if (active?.closest(".permission-card, .ask-question-card")) return;
       textareaRef.current?.focus();
     }
-  }, [isActive]);
+  }, [isActive, processing]);
 
   // Auto-grow textarea
   useEffect(() => {
@@ -341,4 +351,7 @@ export default memo(function ChatInput({ onSubmit, onCommand, processing, isActi
       </div>
     </div>
   );
-});
+}
+
+const ChatInput = memo(forwardRef(ChatInputInner));
+export default ChatInput;

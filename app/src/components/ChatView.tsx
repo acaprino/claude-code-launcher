@@ -8,6 +8,7 @@ import { fmtTokens } from "../utils/format";
 import { messagesToMarkdown } from "../utils/exportSession";
 import type { SessionViewProps } from "./SessionViewProps";
 import ChatInput from "./chat/ChatInput";
+import type { ChatInputHandle } from "./chat/ChatInput";
 import type { Command } from "./chat/CommandMenu";
 import MessageBubble from "./chat/MessageBubble";
 import ToolCard from "./chat/ToolCard";
@@ -119,6 +120,7 @@ export default memo(function ChatView(props: SessionViewProps) {
   const [searchIdx, setSearchIdx] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<ChatInputHandle>(null);
 
   // Sticky auto-scroll: stay pinned to bottom unless user scrolls up
   const stickyRef = useRef(true);
@@ -170,16 +172,27 @@ export default memo(function ChatView(props: SessionViewProps) {
   useEffect(() => {
     if (!stickyRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
-  }, [messages, streamingTick, thinkingTick, messagesEndRef]);
+  }, [messages, streamingTick, thinkingTick]);
 
+
+  // Scroll to bottom when session becomes ready (e.g. after resume)
+  // Focus is owned by ChatInput's own effect
+  useEffect(() => {
+    if (inputState === "awaiting_input") {
+      stickyRef.current = true;
+      const id = requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+      });
+      return () => cancelAnimationFrame(id);
+    }
+  }, [inputState]);
 
   // Auto-focus textarea when window regains focus
   useEffect(() => {
     if (!isActive) return;
     const handleWindowFocus = () => {
       requestAnimationFrame(() => {
-        const textarea = chatContainerRef.current?.closest(".chat-view")?.querySelector("textarea");
-        textarea?.focus();
+        inputRef.current?.focus();
       });
     };
     window.addEventListener("focus", handleWindowFocus);
@@ -272,8 +285,7 @@ export default memo(function ChatView(props: SessionViewProps) {
           messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
           getCurrentWindow().setFocus().then(() => {
             setTimeout(() => {
-              const textarea = chatContainerRef.current?.closest(".chat-view")?.querySelector("textarea");
-              textarea?.focus();
+              inputRef.current?.focus();
             }, 100);
           }).catch((err) => console.debug("[ChatView] setFocus after drop failed:", err));
         }
@@ -288,8 +300,7 @@ export default memo(function ChatView(props: SessionViewProps) {
     if (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable) return;
     if (target.closest("button, a, [role='button']")) return;
     if (window.getSelection()?.toString()) return;
-    const textarea = (e.currentTarget as HTMLElement).querySelector("textarea");
-    textarea?.focus();
+    inputRef.current?.focus();
   }, []);
 
   return (
@@ -417,6 +428,7 @@ export default memo(function ChatView(props: SessionViewProps) {
       {/* Chat input below scrollable area (fixed) — always visible when session is active */}
       {inputState !== "idle" && !hasUnresolvedPermission && (
         <ChatInput
+          ref={inputRef}
           onSubmit={(...args) => { stickyRef.current = true; handleSubmit(...args); }}
           onCommand={handleCommandWrapped}
           processing={inputState === "processing"}
