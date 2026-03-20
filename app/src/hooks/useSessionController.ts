@@ -19,8 +19,7 @@ import { sanitizeInput } from "../utils/sanitizeInput";
 import { notifyAttention } from "../utils/notify";
 import { pruneMessages, PRUNE_THRESHOLD } from "../utils/pruneMessages";
 import type { Command } from "../components/chat/CommandMenu";
-import { useStreamingText } from "./useStreamingText";
-import { useThinkingText } from "./useThinkingText";
+import { useStreamingText, useThinkingText } from "./useBufferedText";
 import { useAgentTasks } from "./useAgentTasks";
 
 // ── Session stats reducer ─────────────────────────────────────────
@@ -153,6 +152,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     inputStateRef.current = s;
     setInputStateRaw(s);
   }, []);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const exitedRef = useRef(false);
   const agentStartedRef = useRef(false);
@@ -337,6 +337,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         messageQueueRef.current = [];
         setQueueLength(0);
         setBackgrounded(false);
+        respondedIdsRef.current.clear();
         setMessages(prev => [...prev, { id: nextId(), role: "status", status: "Interrupted", model: "", timestamp: Date.now() }]);
         agentTasksHook.stopAll();
       } else if (event.type === "exit") {
@@ -347,6 +348,12 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           clearInterval(refreshIntervalRef.current);
           refreshIntervalRef.current = null;
         }
+        // Mark any unresolved permission/ask cards as dead so UI doesn't show stale interactive cards
+        setMessages(prev => prev.map(m =>
+          (m.role === "permission" || m.role === "ask") && !m.resolved
+            ? { ...m, resolved: true, allowed: false } as typeof m
+            : m
+        ));
         onExitRef.current(tabIdRef.current, event.code);
       } else if (event.type === "progress") {
         onTaglineChangeRef.current?.(tabIdRef.current, event.message);
@@ -533,14 +540,12 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   const handlePermissionRespond = useCallback((msgId: string, allow: boolean, suggestions?: PermissionSuggestion[]) => {
     if (respondedIdsRef.current.has(msgId)) return;
     respondedIdsRef.current.add(msgId);
-    let toolUseId = "";
-    setMessages(prev => {
-      const msg = prev.find(m => m.id === msgId && m.role === "permission");
-      if (msg && msg.role === "permission") toolUseId = msg.toolUseId;
-      return prev.map(m =>
-        m.id === msgId && m.role === "permission" ? { ...m, resolved: true, allowed: allow } : m
-      );
-    });
+    // Read toolUseId from ref synchronously — not inside setState updater
+    const permMsg = messagesRef.current.find(m => m.id === msgId && m.role === "permission");
+    const toolUseId = permMsg?.role === "permission" ? permMsg.toolUseId : "";
+    setMessages(prev => prev.map(m =>
+      m.id === msgId && m.role === "permission" ? { ...m, resolved: true, allowed: allow } : m
+    ));
     respondPermission(tabId, allow, toolUseId, suggestions).catch((err) => {
       setMessages(prev => [...prev, { id: `msg-${tabId}-${++idCounterRef.current}`, role: "error", code: "permission", message: String(err), timestamp: Date.now() }]);
     });
@@ -685,7 +690,11 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     if (messages.length > PRUNE_THRESHOLD) {
       setMessages(prev => pruneMessages(prev));
     }
-  }, [messages.length > PRUNE_THRESHOLD]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length]);
+
+  // ── Sync messages ref for synchronous reads ────────────────────
+  messagesRef.current = messages;
 
   // ── Derived state ──────────────────────────────────────────────
   const hasUnresolvedPermission = useMemo(() => {

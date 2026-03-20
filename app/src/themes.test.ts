@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeFontName } from "./themes";
+import { sanitizeFontName, sanitizeColor } from "./themes";
 
 describe("sanitizeFontName", () => {
   it("passes through normal font names", () => {
@@ -41,5 +41,39 @@ describe("sanitizeFontName", () => {
     expect(result).not.toContain("(");
     expect(result).not.toContain('"');
     expect(result).not.toContain("'");
+  });
+});
+
+describe("sanitizeColor", () => {
+  it("allows hex colors", () => {
+    expect(sanitizeColor("#fff")).toBe("#fff");
+    expect(sanitizeColor("#1e1e2e")).toBe("#1e1e2e");
+    expect(sanitizeColor("#1e1e2eFF")).toBe("#1e1e2eFF");
+  });
+
+  it("allows rgb/rgba/hsl/hsla", () => {
+    expect(sanitizeColor("rgb(30, 30, 46)")).toBe("rgb(30, 30, 46)");
+    expect(sanitizeColor("rgba(30, 30, 46, 0.5)")).toBe("rgba(30, 30, 46, 0.5)");
+    expect(sanitizeColor("hsl(240, 21%, 15%)")).toBe("hsl(240, 21%, 15%)");
+  });
+
+  it("allows color-mix", () => {
+    expect(sanitizeColor("color-mix(in srgb, var(--surface) 30%, transparent)"))
+      .toBe("color-mix(in srgb, var(--surface) 30%, transparent)");
+  });
+
+  it("allows CSS var()", () => {
+    expect(sanitizeColor("var(--accent)")).toBe("var(--accent)");
+  });
+
+  it("rejects CSS injection payloads", () => {
+    expect(sanitizeColor("#000; } * { background: url(evil)")).toBe("#000000");
+    expect(sanitizeColor("expression(alert(1))")).toBe("#000000");
+    expect(sanitizeColor("url(https://evil.com)")).toBe("#000000");
+  });
+
+  it("rejects empty/garbage values", () => {
+    expect(sanitizeColor("")).toBe("#000000");
+    expect(sanitizeColor("notacolor")).toBe("#000000");
   });
 });

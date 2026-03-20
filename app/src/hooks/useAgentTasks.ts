@@ -22,7 +22,6 @@ export interface AgentTasksHandle {
 export function useAgentTasks(): AgentTasksHandle {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const tasksRef = useRef<AgentTask[]>([]);
-  const counterRef = useRef(0);
   const rafRef = useRef(0);
 
   const startTask = useCallback((taskId: string, description: string, taskType: string) => {
@@ -89,16 +88,11 @@ export function useAgentTasks(): AgentTasksHandle {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
     tasksRef.current = [];
-    counterRef.current = 0;
   }, []);
 
   return {
     tasks,
-    startTask: (taskId, desc, type) => {
-      // For synthesized tasks from Agent tool, use the counter
-      if (taskId.startsWith("agent-")) startTask(taskId, desc, type);
-      else startTask(taskId, desc, type);
-    },
+    startTask,
     completeTask,
     onTaskStarted,
     onTaskProgress,

@@ -38,6 +38,9 @@ jobs:
         working-directory: sidecar
       - run: npx tsc --noEmit
         working-directory: sidecar
+      - name: Verify compiled sidecar.js matches source
+        run: npx tsc && git diff --exit-code sidecar.js
+        working-directory: sidecar
 
   rust:
     name: Rust (clippy + test)

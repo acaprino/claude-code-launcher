@@ -6,29 +6,38 @@ export function sanitizeFontName(name: string): string {
   return name.replace(/[^a-zA-Z0-9\s\-_.]/g, "");
 }
 
+/** Validate a CSS color value — allows hex, rgb/hsl, color-mix, var() */
+export function sanitizeColor(value: string): string {
+  if (/^#[0-9a-fA-F]{3,8}$/.test(value)) return value;
+  if (/^(rgb|hsl)a?\([^;{}()]*\)$/.test(value)) return value;
+  if (/^color-mix\([^;{}]*\)$/.test(value)) return value;
+  if (/^var\(--[a-zA-Z0-9-]+\)$/.test(value)) return value;
+  return "#000000";
+}
+
 export function applyTheme(themes: Theme[], themeIdx: number): void {
   const theme = themes[themeIdx] ?? themes[0];
   if (!theme) return; // themes not loaded yet
   const c = theme.colors;
   const root = document.documentElement;
 
-  // Colors
-  root.style.setProperty("--bg", c.bg);
-  root.style.setProperty("--surface", c.surface);
-  root.style.setProperty("--mantle", c.mantle);
-  root.style.setProperty("--crust", c.crust);
-  root.style.setProperty("--text", c.text);
-  root.style.setProperty("--text-dim", c.textDim);
-  root.style.setProperty("--overlay0", c.overlay0);
-  root.style.setProperty("--overlay1", c.overlay1);
-  root.style.setProperty("--accent", c.accent);
-  root.style.setProperty("--red", c.red);
-  root.style.setProperty("--green", c.green);
-  root.style.setProperty("--yellow", c.yellow);
+  // Colors (validated to prevent CSS injection from malicious theme files)
+  root.style.setProperty("--bg", sanitizeColor(c.bg));
+  root.style.setProperty("--surface", sanitizeColor(c.surface));
+  root.style.setProperty("--mantle", sanitizeColor(c.mantle));
+  root.style.setProperty("--crust", sanitizeColor(c.crust));
+  root.style.setProperty("--text", sanitizeColor(c.text));
+  root.style.setProperty("--text-dim", sanitizeColor(c.textDim));
+  root.style.setProperty("--overlay0", sanitizeColor(c.overlay0));
+  root.style.setProperty("--overlay1", sanitizeColor(c.overlay1));
+  root.style.setProperty("--accent", sanitizeColor(c.accent));
+  root.style.setProperty("--red", sanitizeColor(c.red));
+  root.style.setProperty("--green", sanitizeColor(c.green));
+  root.style.setProperty("--yellow", sanitizeColor(c.yellow));
 
   // User message styling (theme-configurable)
-  root.style.setProperty("--user-msg-bg", c.userMsgBg ?? "color-mix(in srgb, var(--surface) 30%, transparent)");
-  root.style.setProperty("--user-msg-border", c.userMsgBorder ?? "color-mix(in srgb, var(--accent) 50%, transparent)");
+  root.style.setProperty("--user-msg-bg", sanitizeColor(c.userMsgBg ?? "color-mix(in srgb, var(--surface) 30%, transparent)"));
+  root.style.setProperty("--user-msg-border", sanitizeColor(c.userMsgBorder ?? "color-mix(in srgb, var(--accent) 50%, transparent)"));
 
   // Terminal font
   if (theme.termFont) {

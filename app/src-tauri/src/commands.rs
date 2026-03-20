@@ -632,10 +632,25 @@ const BLOCKED_DIRS: &[&str] = &[
     ".git", ".password-store", ".vault-token",
 ];
 
-const BLOCKED_FILES: &[&str] = &[
-    ".env", ".env.local", ".env.production", ".env.staging", ".env.development",
-    "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
-];
+/// Block sensitive filenames using prefix/suffix matching to catch variants.
+fn is_blocked_filename(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    // Block all .env variants (.env, .env.local, .env.test, .env.ci, etc.)
+    if lower == ".env" || lower.starts_with(".env.") { return true; }
+    // Block SSH key files (private and public)
+    for prefix in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"] {
+        if lower.starts_with(prefix) { return true; }
+    }
+    // Block certificate/key file extensions
+    for ext in &[".pem", ".key", ".p12", ".pfx", ".keystore", ".jks"] {
+        if lower.ends_with(ext) { return true; }
+    }
+    // Block known credential files
+    for blocked in &[".htpasswd", ".netrc", "credentials.json", ".npmrc"] {
+        if lower == *blocked { return true; }
+    }
+    false
+}
 
 /// Validate an external file path: canonicalize, reject UNC, block sensitive dirs and files.
 fn validate_external_path(path: &str) -> Result<std::path::PathBuf, String> {
@@ -657,7 +672,7 @@ fn validate_external_path(path: &str) -> Result<std::path::PathBuf, String> {
     }
     // Block sensitive filenames
     if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-        if BLOCKED_FILES.iter().any(|b| name.eq_ignore_ascii_case(b)) {
+        if is_blocked_filename(name) {
             log_warn!("validate_external_path: blocked sensitive file: {path}");
             return Err("Access to sensitive files is blocked".to_string());
         }
@@ -865,27 +880,34 @@ mod tests {
 
     #[test]
     fn blocked_files_blocks_env() {
-        let name = ".env";
-        assert!(BLOCKED_FILES.iter().any(|b| name.eq_ignore_ascii_case(b)));
+        assert!(is_blocked_filename(".env"));
     }
 
     #[test]
-    fn blocked_files_blocks_env_local() {
-        let name = ".env.local";
-        assert!(BLOCKED_FILES.iter().any(|b| name.eq_ignore_ascii_case(b)));
+    fn blocked_files_blocks_env_variants() {
+        for name in &[".env.local", ".env.test", ".env.ci", ".env.production", ".ENV.STAGING"] {
+            assert!(is_blocked_filename(name), "should block {name}");
+        }
     }
 
     #[test]
     fn blocked_files_blocks_ssh_keys() {
-        for key in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"] {
-            assert!(BLOCKED_FILES.iter().any(|b| key.eq_ignore_ascii_case(b)), "should block {key}");
+        for key in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "id_rsa.pub"] {
+            assert!(is_blocked_filename(key), "should block {key}");
+        }
+    }
+
+    #[test]
+    fn blocked_files_blocks_certs_and_credentials() {
+        for name in &["server.pem", "private.key", "cert.p12", "keystore.jks", ".htpasswd", ".netrc", "credentials.json", ".npmrc"] {
+            assert!(is_blocked_filename(name), "should block {name}");
         }
     }
 
     #[test]
     fn blocked_files_allows_normal_files() {
-        for name in &["main.rs", "index.ts", "README.md", ".gitignore"] {
-            assert!(!BLOCKED_FILES.iter().any(|b| name.eq_ignore_ascii_case(b)), "should allow {name}");
+        for name in &["main.rs", "index.ts", "README.md", ".gitignore", "package.json"] {
+            assert!(!is_blocked_filename(name), "should allow {name}");
         }
     }
 

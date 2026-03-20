@@ -285,7 +285,7 @@ async function handleCreate(cmd) {
     };
     // Resume or fork if specified
     if (cmd.sessionId) {
-        if (cmd.fork) {
+        if ("fork" in cmd && cmd.fork) {
             options.resume = cmd.sessionId;
             options.forkSession = true;
         }

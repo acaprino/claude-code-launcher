@@ -1,19 +1,24 @@
 import { useCallback, useRef, useState } from "react";
 import type { ChatMessage } from "../types";
 
-export interface StreamingTextHandle {
+export interface BufferedTextHandle {
   textRef: React.RefObject<string>;
   idRef: React.RefObject<string | null>;
   tick: number;
-  /** Append streaming chunk, scheduling a render tick via rAF */
+  /** Append chunk, scheduling a render tick via rAF */
   append: (text: string, id: string) => void;
-  /** Finalize current stream into a committed message */
+  /** Finalize current buffer into a committed message */
   finalize: (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => void;
   /** Clean up rAF and refs (call in effect cleanup) */
   cleanup: () => void;
 }
 
-export function useStreamingText(): StreamingTextHandle {
+/**
+ * Shared hook for buffering streaming text (assistant) or thinking text.
+ * Accumulates chunks via refs, batches renders via rAF, and finalizes
+ * into a committed ChatMessage with the specified role.
+ */
+export function useBufferedText(role: "assistant" | "thinking"): BufferedTextHandle {
   const textRef = useRef("");
   const idRef = useRef<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -42,8 +47,12 @@ export function useStreamingText(): StreamingTextHandle {
     textRef.current = "";
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
-    setMessages(prev => [...prev, { id, role: "assistant", text: finalText, streaming: false, timestamp: Date.now() }]);
-  }, []);
+    if (role === "assistant") {
+      setMessages(prev => [...prev, { id, role: "assistant", text: finalText, streaming: false, timestamp: Date.now() }]);
+    } else {
+      setMessages(prev => [...prev, { id, role: "thinking", text: finalText, timestamp: Date.now() }]);
+    }
+  }, [role]);
 
   const cleanup = useCallback(() => {
     idRef.current = null;
@@ -54,3 +63,9 @@ export function useStreamingText(): StreamingTextHandle {
 
   return { textRef, idRef, tick, append, finalize, cleanup };
 }
+
+/** Streaming assistant text buffer */
+export const useStreamingText = () => useBufferedText("assistant");
+
+/** Thinking text buffer */
+export const useThinkingText = () => useBufferedText("thinking");

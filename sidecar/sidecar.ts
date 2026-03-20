@@ -547,7 +547,7 @@ const ACCEPT_EDITS_TOOLS = new Set<string>(["Write", "Edit", "Read", "Glob", "Gr
 
 // ── Command handlers ────────────────────────────────────────────────
 
-async function handleCreate(cmd: CreateCommand): Promise<void> {
+async function handleCreate(cmd: CreateCommand | ResumeCommand | ForkCommand): Promise<void> {
   const { tabId, cwd, model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins } = cmd;
 
   if (sessions.has(tabId)) {
@@ -764,7 +764,7 @@ async function handleCreate(cmd: CreateCommand): Promise<void> {
 
   // Resume or fork if specified
   if (cmd.sessionId) {
-    if (cmd.fork) {
+    if ("fork" in cmd && cmd.fork) {
       options.resume = cmd.sessionId;
       options.forkSession = true;
     } else {
@@ -1479,11 +1479,11 @@ rl.on("line", async (line: string) => {
         handleSend(cmd);
         break;
       case "resume":
-        await handleCreate(cmd as unknown as CreateCommand);
+        await handleCreate(cmd);
         break;
       case "fork":
-        cmd.fork = true;
-        await handleCreate(cmd as unknown as CreateCommand);
+        (cmd as ForkCommand).fork = true;
+        await handleCreate(cmd);
         break;
       case "interrupt":
         await handleInterrupt(cmd);
