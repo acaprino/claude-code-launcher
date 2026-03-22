@@ -485,6 +485,31 @@
 .tv-bottom-cost { color: var(--green); font-weight: 600; }
 .tv-bottom-stat { color: var(--text-dim); }
 .tv-bottom-warn { color: var(--yellow); }
+
+.tv-bottom-thinking {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  font-style: italic;
+  opacity: 0.8;
+  animation: tv-thinking-fade 1.5s ease-in-out infinite;
+}
+
+.tv-bottom-thinking-dot {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tv-spin 0.8s linear infinite;
+}
+
+@keyframes tv-thinking-fade {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
 .tv-bottom-spacer { flex: 1; }
 
 /* Context saturation bar */

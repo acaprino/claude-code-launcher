@@ -462,6 +462,12 @@ export default memo(function TerminalView(props: SessionViewProps) {
             </span>
           </>
         )}
+        {thinkingIdRef.current && (
+          <span className="tv-bottom-thinking">
+            <span className="tv-bottom-thinking-dot" />
+            thinking
+          </span>
+        )}
         <span className="tv-bottom-spacer" />
         <button className="tv-bottom-btn" title="Attach files" onClick={handleAttachClick}><IconPlus /></button>
         <button
