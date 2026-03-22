@@ -119,7 +119,7 @@ const ActivitySpinner = memo(function ActivitySpinner({ label }: { label: string
   const [startTime] = useState(() => Date.now());
   return (
     <div className="tv-activity">
-      <span className="tv-activity-sigil">{"\u2026"}</span>
+      <span className="tv-activity-spinner">{"\u2026"}</span>
       <span className="tv-activity-label">{label}</span>
       <ElapsedTimer startTime={startTime} />
     </div>
@@ -330,12 +330,8 @@ export default memo(function TerminalView(props: SessionViewProps) {
                 case "ask":
                   return <AskQuestionCard questions={msg.questions} resolved={msg.resolved} answers={msg.answers} onRespond={(answers) => handleAskUserRespond(msg.id, answers)} />;
                 case "thinking":
-                  if (hideThinking) {
-                    if (msg.ended) return null;
-                    return <div className="tv-activity"><span className="tv-activity-sigil">{"\u2026"}</span><span className="tv-activity-label">Thinking...</span></div>;
-                  }
+                  if (hideThinking) return null;
                   return <TermThinkingLine text={msg.text} ended={msg.ended} />;
-                case "result":
                   return null;
                 case "error":
                   return <TermErrorLine code={msg.code} message={msg.message} />;
@@ -373,7 +369,7 @@ export default memo(function TerminalView(props: SessionViewProps) {
         )}
         {thinkingIdRef.current && hideThinking && (
           <div className="tv-line">
-            <div className="tv-activity"><span className="tv-activity-sigil">{"\u2026"}</span><span className="tv-activity-label">Thinking...</span></div>
+            <div className="tv-activity"><span className="tv-activity-spinner">{"\u2026"}</span><span className="tv-activity-label">Thinking...</span></div>
           </div>
         )}
         {/* Live streaming outside virtualizer */}
