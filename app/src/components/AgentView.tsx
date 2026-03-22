@@ -7,6 +7,7 @@ type ConfigUpdate = { modelIdx?: number; effortIdx?: number; permModeIdx?: numbe
 
 interface AgentViewProps extends SessionControllerProps {
   hideThinking?: boolean;
+  onProcessingChange?: (isProcessing: boolean) => void;
   onConfigChange?: (tabId: string, update: ConfigUpdate) => void;
 }
 
@@ -15,7 +16,7 @@ interface AgentViewProps extends SessionControllerProps {
  * do NOT destroy the active agent session.
  */
 export default memo(function AgentView({
-  hideThinking, onConfigChange, ...controllerProps
+  hideThinking, onProcessingChange, onConfigChange, ...controllerProps
 }: AgentViewProps) {
   const controller = useSessionController(controllerProps);
 
@@ -33,6 +34,7 @@ export default memo(function AgentView({
       hideThinking={hideThinking}
       controller={controller}
       onConfigChange={handleConfigChange}
+      onProcessingChange={onProcessingChange}
     />
   );
 });

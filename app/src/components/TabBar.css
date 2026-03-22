@@ -116,6 +116,21 @@
   animation: pulse 2s ease-in-out 3;
 }
 
+
+.tab-processing-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: tab-spin 0.8s linear infinite;
+}
+
+@keyframes tab-spin {
+  to { transform: rotate(360deg); }
+}
+
 .tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -274,7 +289,22 @@
 }
 
 /* Temporary tab indicator */
-.tab.temporary .tab-label {
+.tab.temporary 
+.tab-processing-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: tab-spin 0.8s linear infinite;
+}
+
+@keyframes tab-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tab-label {
   font-style: italic;
   opacity: 0.8;
 }

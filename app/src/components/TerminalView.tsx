@@ -211,6 +211,12 @@ export default memo(function TerminalView(props: SessionViewProps) {
     return () => window.removeEventListener("focus", handleWindowFocus);
   }, [isActive]);
 
+  // Propagate processing state to tab bar
+  const onProcessingChange = props.onProcessingChange;
+  useEffect(() => {
+    onProcessingChange?.(inputState === "processing");
+  }, [inputState, onProcessingChange]);
+
   // Keyboard shortcuts — Ctrl+C copies selection or interrupts agent
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.ctrlKey && e.key === "c") {

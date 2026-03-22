@@ -217,6 +217,17 @@ export function useTabManager() {
 
   // H1: Dedicated callback that guards against redundant array creation
   // when hasNewOutput is already true (high-frequency agent output path).
+  const markProcessing = useCallback(
+    (tabId: string, isProcessing: boolean) => {
+      setTabs((prev) => {
+        const tab = prev.find((t) => t.id === tabId);
+        if (!tab || tab.isProcessing === isProcessing) return prev;
+        return prev.map((t) => t.id === tabId ? { ...t, isProcessing } : t);
+      });
+    },
+    [],
+  );
+
   const markNewOutput = useCallback((tabId: string) => {
     setTabs((prev) => {
       const target = prev.find((t) => t.id === tabId);
@@ -283,6 +294,7 @@ export function useTabManager() {
     toggleSettingsTab,
     closeTab,
     updateTab,
+    markProcessing,
     markNewOutput,
     activateTab,
     nextTab,

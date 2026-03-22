@@ -76,6 +76,7 @@ export default memo(function TabBar({ tabs, activeTabId, onActivate, onClose, on
                   aria-selected={isActive}
                   tabIndex={isActive ? 0 : -1}
                 >
+                  {tab.isProcessing && <span className="tab-processing-spinner" />}
                   <span className="tab-label" title={tab.temporary ? `${label} (temp)` : label}>{label}</span>
                   {tab.exitCode != null && (
                     <span className={`tab-exit ${tab.exitCode === 0 ? "ok" : "err"}`}>

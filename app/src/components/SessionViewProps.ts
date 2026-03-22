@@ -10,4 +10,5 @@ export interface SessionViewProps {
   hideThinking?: boolean;
   controller: SessionController;
   onConfigChange?: (update: { modelIdx?: number; effortIdx?: number; permModeIdx?: number }) => void;
+  onProcessingChange?: (isProcessing: boolean) => void;
 }

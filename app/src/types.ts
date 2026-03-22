@@ -18,6 +18,7 @@ export interface Tab {
   temporary?: boolean;
   agentSessionId?: string;
   hasNewOutput?: boolean;
+  isProcessing?: boolean;
   exitCode?: number | null;
   tagline?: string;
   /** When set, Terminal will call resumeAgent() instead of spawnAgent(). Consumed on mount. */

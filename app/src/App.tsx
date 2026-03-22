@@ -40,6 +40,7 @@ function AppContent() {
     toggleSettingsTab,
     closeTab,
     updateTab,
+    markProcessing,
     markNewOutput,
     activateTab,
     nextTab,
@@ -485,6 +486,7 @@ function AppContent() {
                     onError={handleError}
                     onTaglineChange={handleTaglineChange}
                     hideThinking={settings?.hide_thinking}
+                    onProcessingChange={(p: boolean) => markProcessing(tab.id, p)}
                     plugins={pluginPaths}
                     resumeSessionId={tab.resumeSessionId}
                     forkSessionId={tab.forkSessionId}
