@@ -1,7 +1,6 @@
 /* ── Right Sidebar ─────────────────────────────────────────────── */
 .right-sidebar {
   width: var(--right-sidebar-width);
-  min-width: 220px;
   max-width: 420px;
   border-left: 1px solid color-mix(in srgb, var(--overlay0) 30%, transparent);
   display: flex;
@@ -115,6 +114,12 @@
   overflow-wrap: break-word;
   word-break: break-word;
   min-width: 0;
+  max-width: 100%;
+}
+
+/* !important needed to override Radix ScrollArea's inline overflow style */
+.right-sidebar-content > [data-radix-scroll-area-viewport] {
+  overflow-x: hidden !important;
 }
 
 /* ── Shared Radix ScrollArea styles ──────────────────────────── */
