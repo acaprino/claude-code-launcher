@@ -1,7 +1,7 @@
 import { memo, useCallback } from "react";
 import { useSessionController } from "../hooks/useSessionController";
 import type { SessionControllerProps } from "../hooks/useSessionController";
-import TerminalView from "./TerminalView";
+import XTermView from "./XTermView";
 
 type ConfigUpdate = { modelIdx?: number; effortIdx?: number; permModeIdx?: number };
 
@@ -25,7 +25,7 @@ export default memo(function AgentView({
   }, [onConfigChange, controllerProps.tabId]);
 
   return (
-    <TerminalView
+    <XTermView
       tabId={controllerProps.tabId}
       modelIdx={controllerProps.modelIdx}
       effortIdx={controllerProps.effortIdx}

@@ -21,6 +21,7 @@ import { pruneMessages, PRUNE_THRESHOLD } from "../utils/pruneMessages";
 import type { Command } from "../components/chat/CommandMenu";
 import { useStreamingText, useThinkingText } from "./useBufferedText";
 import { useAgentTasks } from "./useAgentTasks";
+import { TerminalDocument } from "../components/terminal/TerminalDocument";
 
 // ── Session stats reducer ─────────────────────────────────────────
 interface SessionStats {
@@ -130,6 +131,9 @@ export interface SessionController {
   setDroppedFiles: React.Dispatch<React.SetStateAction<string[]>>;
   handleDroppedFilesConsumed: () => void;
   handleAttachClick: () => Promise<void>;
+  // xterm.js document model
+  document: TerminalDocument;
+  projectPath: string;
 }
 
 export function useSessionController(props: SessionControllerProps): SessionController {
@@ -167,6 +171,9 @@ export function useSessionController(props: SessionControllerProps): SessionCont
 
   const idCounterRef = useRef(0);
   const nextId = () => `msg-${tabId}-${++idCounterRef.current}`;
+
+  // xterm.js TerminalDocument — created here so it exists before spawnAgent sends events
+  const [document] = useState(() => new TerminalDocument());
 
   // Sub-hooks
   const streaming = useStreamingText();
@@ -220,11 +227,13 @@ export function useSessionController(props: SessionControllerProps): SessionCont
             setMessages(prev => [...prev, { id: nextId(), role: "assistant", text: event.text, streaming: false, timestamp: Date.now() }]);
           }
         }
+        document.handleAssistant(event.text, event.streaming);
         onTaglineChangeRef.current?.(tabIdRef.current, "");
       } else if (event.type === "toolUse") {
         finalizeStreaming();
         finalizeThinking();
         setMessages(prev => [...prev, { id: nextId(), role: "tool", tool: event.tool, input: event.input, timestamp: Date.now() }]);
+        document.handleToolUse(event.tool, event.input, (event as Record<string, unknown>).toolUseId as string | undefined);
         const inp = event.input as Record<string, string> | undefined;
         const detail = event.tool === "Bash" ? (inp?.command || "").slice(0, 40)
           : event.tool === "Edit" || event.tool === "Write" || event.tool === "Read"
@@ -249,6 +258,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           }
           return prev;
         });
+        document.handleToolResult(event.tool, event.output, event.success, (event as Record<string, unknown>).toolUseId as string | undefined);
         if (event.tool === "Agent") {
           const output = typeof event.output === "string" ? event.output : JSON.stringify(event.output ?? "");
           // Find last running agent task
@@ -274,12 +284,14 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           toolUseId: event.toolUseId, suggestions: event.suggestions, timestamp: Date.now(),
         }]);
         setInputState("processing");
+        document.handlePermission(event.tool, event.description, event.toolUseId, event.suggestions);
         onTaglineChangeRef.current?.(tabIdRef.current, `Permission: ${event.tool}`);
         notifyAttention("Permission Required", `${event.tool}: ${event.description || "Tool needs approval"}`, !isActiveRef.current).catch((err) => console.debug("[session] permission notification failed:", err));
       } else if (event.type === "ask") {
         finalizeStreaming();
         finalizeThinking();
         setMessages(prev => [...prev, { id: nextId(), role: "ask", questions: event.questions, timestamp: Date.now() }]);
+        document.handleAsk(event.questions);
         setInputState("processing");
         onTaglineChangeRef.current?.(tabIdRef.current, "Question");
         notifyAttention("Question", "Claude is asking a question", !isActiveRef.current).catch((err) => console.debug("[session] ask notification failed:", err));
@@ -300,6 +312,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         onTaglineChangeRef.current?.(tabIdRef.current, "");
       } else if (event.type === "thinking") {
         thinking.append(event.text, nextId());
+        document.handleThinking(event.text);
         onTaglineChangeRef.current?.(tabIdRef.current, "Thinking...");
       } else if (event.type === "result") {
         finalizeStreaming();
@@ -319,6 +332,11 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           ...prev.map(m => m.role === "thinking" && !m.ended ? { ...m, ended: true } as ChatMessage : m),
           { id: nextId(), role: "result", ...event, timestamp: Date.now() },
         ]);
+        document.handleResult(
+          event.cost || 0, event.inputTokens || 0, event.outputTokens || 0,
+          event.cacheReadTokens || 0, event.cacheWriteTokens || 0,
+          event.turns || 0, event.durationMs || 0, event.sessionId || "",
+        );
         onTaglineChangeRef.current?.(tabIdRef.current, "");
       } else if (event.type === "error") {
         setMessages(prev => {
@@ -335,6 +353,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           }
           return [...prev, { id: nextId(), role: "error", code: event.code, message: event.message, timestamp: Date.now() }];
         });
+        document.handleError(event.code, event.message);
       } else if (event.type === "interrupted") {
         finalizeStreaming();
         finalizeThinking();
@@ -343,6 +362,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         setBackgrounded(false);
         respondedIdsRef.current.clear();
         setMessages(prev => [...prev, { id: nextId(), role: "status", status: "Interrupted", model: "", timestamp: Date.now() }]);
+        document.handleInterrupted();
         agentTasksHook.stopAll();
       } else if (event.type === "exit") {
         finalizeStreaming();
@@ -371,6 +391,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           }
           return [...prev, { id: nextId(), role: "todo", todos: event.todos, timestamp: Date.now() }];
         });
+        document.handleTodo(event.todos);
       } else if (event.type === "taskStarted") {
         agentTasksHook.onTaskStarted(event.taskId, event.description, event.taskType);
       } else if (event.type === "taskProgress") {
@@ -390,6 +411,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         if (event.status && event.status !== "null" && event.status !== "started") {
           setMessages(prev => [...prev, { id: nextId(), role: "status", status: event.status, model: event.model, timestamp: Date.now() }]);
         }
+        document.handleStatus(event.status, event.model);
       }
 
       if (!isActiveRef.current) {
@@ -526,6 +548,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
 
     const sanitized = sanitizeInput(fullText);
     setMessages(prev => [...prev, { id: `msg-${tabId}-${++idCounterRef.current}`, role: "user", text: fullText, timestamp: Date.now() }]);
+    document.handleUserMessage(fullText);
 
     if (inputStateRef.current === "awaiting_input") {
       setInputState("processing");
@@ -542,11 +565,13 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   // ── Permission response ─────────────────────────────────────────
   const respondedIdsRef = useRef(new Set<string>());
   const handlePermissionRespond = useCallback((msgId: string, allow: boolean, suggestions?: PermissionSuggestion[]) => {
-    if (respondedIdsRef.current.has(msgId)) return;
-    respondedIdsRef.current.add(msgId);
     // Read toolUseId from ref synchronously — not inside setState updater
     const permMsg = messagesRef.current.find(m => m.id === msgId && m.role === "permission");
     const toolUseId = permMsg?.role === "permission" ? permMsg.toolUseId : "";
+    // Dedup on toolUseId (not msgId) — XTermView block IDs differ from ChatMessage IDs
+    const dedupKey = toolUseId || msgId;
+    if (respondedIdsRef.current.has(dedupKey)) return;
+    respondedIdsRef.current.add(dedupKey);
     setMessages(prev => prev.map(m =>
       m.id === msgId && m.role === "permission" ? { ...m, resolved: true, allowed: allow } : m
     ));
@@ -587,14 +612,15 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         if (idx < 0) return prev;
         const msg = prev[idx];
         if (msg.role !== "permission") return prev;
-        if (respondedIdsRef.current.has(msg.id)) return prev;
-        respondedIdsRef.current.add(msg.id);
+        const dedupKey = msg.toolUseId || msg.id;
+        if (respondedIdsRef.current.has(dedupKey)) return prev;
+        respondedIdsRef.current.add(dedupKey);
         const sugg = key === "a" ? msg.suggestions : undefined;
         const permMsgId = msg.id;
         const permToolUseId = msg.toolUseId;
         queueMicrotask(() => respondPermission(tabId, allow, permToolUseId, sugg).catch((err) => {
           console.debug("[session] keyboard permission response failed:", err);
-          respondedIdsRef.current.delete(permMsgId);
+          respondedIdsRef.current.delete(dedupKey);
           setMessages(p => p.map(m => m.id === permMsgId && m.role === "permission" ? { ...m, resolved: false, allowed: undefined } as typeof m : m));
         }));
         const next = [...prev];
@@ -744,5 +770,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     handleSubmit, handlePermissionRespond, handleAskUserRespond,
     handleCommand, handleInterrupt, handleBackground,
     droppedFiles, setDroppedFiles, handleDroppedFilesConsumed, handleAttachClick,
+    document,
+    projectPath,
   };
 }
