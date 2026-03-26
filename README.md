@@ -5,8 +5,8 @@
 <h1 align="center">Figtree</h1>
 
 <p align="center">
-  <strong>A native Windows app for managing Claude Code sessions in a tabbed interface.</strong><br>
-  <sub>Pick a project. Pick a model. Hit Enter. Code.</sub>
+  <strong>The first dedicated desktop client for the Claude Agent SDK.</strong><br>
+  <sub>Your Claude Max account. Your projects. Tabbed, native, zero config.</sub>
 </p>
 
 <p align="center">
@@ -27,14 +27,17 @@
 
 ## Why Figtree?
 
-I run a lot of Claude Code sessions across different projects. Terminal windows pile up, I lose track of which session is where, and when I close them I lose everything.
+IDEs like Cursor, Windsurf, and Trae offer AI features &mdash; but they own the auth, the tokens, and the model access. If you're paying for Claude Max, you're paying twice. If you want the full Agent SDK, you're stuck in a terminal.
 
-Figtree fixes that. It wraps the Claude Code Agent SDK in a native desktop app with tabs, so you can run multiple agents side by side, switch between projects instantly, and pick up right where you left off tomorrow.
+Figtree is the missing piece: **a native desktop app built entirely on the Claude Agent SDK**, using your own Claude account. No proprietary tokens, no API keys, no IDE lock-in. Just your projects and your agents, in a dedicated interface designed for multi-session workflows.
 
+- **Your tokens, your account** &mdash; authenticates directly with your Claude credentials, no middleman
+- **Not an IDE plugin** &mdash; a purpose-built app for Claude Agent sessions, not an afterthought bolted onto an editor
 - **No more juggling terminals** &mdash; all your sessions live in tabs, with output indicators so you know which ones need attention
 - **No more `cd`-ing around** &mdash; your project directories are scanned automatically, type to filter, Enter to launch
 - **No more lost context** &mdash; sessions persist across restarts, resume or fork any past session
 - **No mouse required** &mdash; every action has a keyboard shortcut
+- **Zero config for teams** &mdash; distribute one `.exe`, everyone uses their own Claude Max subscription
 
 ---
 
@@ -250,6 +253,6 @@ Contributions welcome. [Open an issue](https://github.com/acaprino/figtree/issue
 ---
 
 <p align="center">
-  <sub>Windows native. Keyboard-first. Built with Tauri 2, React 19, and Rust.</sub><br>
-  <sub>Figtree &mdash; where ideas take root.</sub>
+  <sub>The only dedicated desktop client for Claude Agent SDK. No IDE tax. No token middleman.</sub><br>
+  <sub>Built with Tauri 2, React 19, and Rust. Windows native. Keyboard-first.</sub>
 </p>
