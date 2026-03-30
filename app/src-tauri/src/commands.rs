@@ -352,6 +352,7 @@ pub fn spawn_agent(
     perm_mode: String,
     plugins: Vec<String>,
     disabled_hooks: Vec<String>,
+    api_base_url: String,
     on_event: Channel<AgentEvent>,
 ) -> Result<(), String> {
     if !sidecar.try_restart() {
@@ -375,6 +376,7 @@ pub fn spawn_agent(
         "permMode": perm_mode,
         "plugins": plugins,
         "disabledHooks": disabled_hooks,
+        "apiBaseUrl": if api_base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(api_base_url) },
     }))
 }
 
@@ -419,6 +421,7 @@ pub fn agent_resume(
     perm_mode: String,
     plugins: Vec<String>,
     disabled_hooks: Vec<String>,
+    api_base_url: String,
     on_event: Channel<AgentEvent>,
 ) -> Result<(), String> {
     if !sidecar.try_restart() {
@@ -438,6 +441,7 @@ pub fn agent_resume(
         "permMode": perm_mode,
         "plugins": plugins,
         "disabledHooks": disabled_hooks,
+        "apiBaseUrl": if api_base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(api_base_url) },
     }))
 }
 
@@ -452,6 +456,7 @@ pub fn agent_fork(
     perm_mode: String,
     plugins: Vec<String>,
     disabled_hooks: Vec<String>,
+    api_base_url: String,
     on_event: Channel<AgentEvent>,
 ) -> Result<(), String> {
     if !sidecar.try_restart() {
@@ -471,6 +476,7 @@ pub fn agent_fork(
         "permMode": perm_mode,
         "plugins": plugins,
         "disabledHooks": disabled_hooks,
+        "apiBaseUrl": if api_base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(api_base_url) },
     }))
 }
 

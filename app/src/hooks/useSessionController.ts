@@ -100,6 +100,7 @@ export interface SessionControllerProps {
   onTaglineChange?: (tabId: string, tagline: string) => void;
   plugins?: string[];
   disabledHooks?: string[];
+  apiBaseUrl?: string;
   resumeSessionId?: string;
   forkSessionId?: string;
 }
@@ -152,7 +153,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
   const {
     tabId, projectPath, modelIdx, effortIdx, permModeIdx, systemPrompt,
     isActive, onSessionCreated, onNewOutput, onExit, onError, onTaglineChange,
-    plugins = [], disabledHooks = [], resumeSessionId, forkSessionId,
+    plugins = [], disabledHooks = [], apiBaseUrl = "", resumeSessionId, forkSessionId,
   } = props;
 
   const disabledHooksRef = useRef(disabledHooks);
@@ -480,10 +481,10 @@ export function useSessionController(props: SessionControllerProps): SessionCont
       if (cancelled) return;
 
       const launchPromise = resumeSessionId
-        ? resumeAgent(tabId, resumeSessionId, projectPath, modelId, effortId, permMode, plugins, disabledHooksRef.current, handleAgentEvent)
+        ? resumeAgent(tabId, resumeSessionId, projectPath, modelId, effortId, permMode, plugins, disabledHooksRef.current, apiBaseUrl, handleAgentEvent)
         : forkSessionId
-          ? forkAgent(tabId, forkSessionId, projectPath, modelId, effortId, permMode, plugins, disabledHooksRef.current, handleAgentEvent)
-          : spawnAgent(tabId, projectPath, modelId, effortId, sanitizeInput(systemPrompt), permMode, plugins, disabledHooksRef.current, handleAgentEvent);
+          ? forkAgent(tabId, forkSessionId, projectPath, modelId, effortId, permMode, plugins, disabledHooksRef.current, apiBaseUrl, handleAgentEvent)
+          : spawnAgent(tabId, projectPath, modelId, effortId, sanitizeInput(systemPrompt), permMode, plugins, disabledHooksRef.current, apiBaseUrl, handleAgentEvent);
 
       launchPromise
         .then((channel) => {

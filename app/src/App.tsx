@@ -480,6 +480,7 @@ function AppContent() {
                     onProcessingChange={(p: boolean) => markProcessing(tab.id, p)}
                     plugins={pluginPaths}
                     disabledHooks={settings?.disabled_hooks ?? []}
+                    apiBaseUrl={settings?.api_base_url || ""}
                     resumeSessionId={tab.resumeSessionId}
                     forkSessionId={tab.forkSessionId}
                     onConfigChange={handleConfigChange}

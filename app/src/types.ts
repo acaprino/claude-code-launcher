@@ -66,6 +66,7 @@ export interface Settings {
   disabled_hooks?: string[];
   onboarding_seen?: boolean;
   skip_close_confirm?: boolean;
+  api_base_url?: string;
 }
 
 export interface UsageEntry {

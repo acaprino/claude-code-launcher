@@ -50,6 +50,8 @@ pub struct Settings {
     pub sidebar_width: u32,
     #[serde(default)]
     pub session_panel_open: bool,
+    #[serde(default)]
+    pub api_base_url: String,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }

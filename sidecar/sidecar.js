@@ -116,7 +116,7 @@ async function withTabLock(tabId, fn) {
 const _latestAutocompleteSeq = new Map();
 // ── Command handlers ────────────────────────────────────────────────
 async function handleCreate(cmd) {
-    const { tabId, cwd, model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins } = cmd;
+    const { tabId, cwd, model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins, apiBaseUrl } = cmd;
     if (sessions.has(tabId)) {
         // Kill existing session (React 18 StrictMode sends create→create→kill)
         log(`Replacing existing session for tab ${tabId}`);
@@ -158,6 +158,9 @@ async function handleCreate(cmd) {
         settingSources: ["user", "project", "local"],
         agentProgressSummaries: true,
     };
+    if (apiBaseUrl) {
+        options.env = { ...process.env, ANTHROPIC_BASE_URL: apiBaseUrl };
+    }
     if (systemPrompt) {
         options.systemPrompt = {
             type: "preset",
@@ -352,7 +355,7 @@ async function handleCreate(cmd) {
         pendingPermissions: new Map(),
         pendingAskUser: null,
         permState,
-        _config: { cwd: cwd || process.cwd(), model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins },
+        _config: { cwd: cwd || process.cwd(), model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins, apiBaseUrl },
         _sessionId: "",
         _interrupted: false,
         _pushInput: (text) => {

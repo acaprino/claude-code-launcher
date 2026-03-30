@@ -10,6 +10,7 @@ export async function spawnAgent(
   permMode: string,
   plugins: string[],
   disabledHooks: string[],
+  apiBaseUrl: string,
   onEvent: (event: AgentEvent) => void,
 ): Promise<Channel<AgentEvent>> {
   const channel = new Channel<AgentEvent>();
@@ -24,6 +25,7 @@ export async function spawnAgent(
     permMode,
     plugins,
     disabledHooks,
+    apiBaseUrl,
     onEvent: channel,
   });
 
@@ -43,6 +45,7 @@ export async function resumeAgent(
   permMode: string,
   plugins: string[],
   disabledHooks: string[],
+  apiBaseUrl: string,
   onEvent: (event: AgentEvent) => void,
 ): Promise<Channel<AgentEvent>> {
   const channel = new Channel<AgentEvent>();
@@ -57,6 +60,7 @@ export async function resumeAgent(
     permMode,
     plugins,
     disabledHooks,
+    apiBaseUrl,
     onEvent: channel,
   });
 
@@ -72,6 +76,7 @@ export async function forkAgent(
   permMode: string,
   plugins: string[],
   disabledHooks: string[],
+  apiBaseUrl: string,
   onEvent: (event: AgentEvent) => void,
 ): Promise<Channel<AgentEvent>> {
   const channel = new Channel<AgentEvent>();
@@ -86,6 +91,7 @@ export async function forkAgent(
     permMode,
     plugins,
     disabledHooks,
+    apiBaseUrl,
     onEvent: channel,
   });
 

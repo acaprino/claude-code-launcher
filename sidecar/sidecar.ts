@@ -48,6 +48,7 @@ interface SessionConfig {
   skipPerms?: boolean;
   allowedTools?: string[];
   plugins?: string[];
+  apiBaseUrl?: string;
 }
 
 /** Per-session state stored in the sessions Map */
@@ -118,6 +119,7 @@ interface CreateCommand {
   skipPerms?: boolean;
   allowedTools?: string[];
   plugins?: string[];
+  apiBaseUrl?: string;
   sessionId?: string;
   fork?: boolean;
 }
@@ -140,6 +142,7 @@ interface ResumeCommand {
   skipPerms?: boolean;
   allowedTools?: string[];
   plugins?: string[];
+  apiBaseUrl?: string;
 }
 
 interface ForkCommand {
@@ -155,6 +158,7 @@ interface ForkCommand {
   skipPerms?: boolean;
   allowedTools?: string[];
   plugins?: string[];
+  apiBaseUrl?: string;
 }
 
 interface InterruptCommand {
@@ -584,7 +588,7 @@ const _latestAutocompleteSeq = new Map<string, number>();
 // ── Command handlers ────────────────────────────────────────────────
 
 async function handleCreate(cmd: CreateCommand | ResumeCommand | ForkCommand): Promise<void> {
-  const { tabId, cwd, model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins } = cmd;
+  const { tabId, cwd, model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins, apiBaseUrl } = cmd;
 
   if (sessions.has(tabId)) {
     // Kill existing session (React 18 StrictMode sends create→create→kill)
@@ -629,6 +633,10 @@ async function handleCreate(cmd: CreateCommand | ResumeCommand | ForkCommand): P
     settingSources: ["user", "project", "local"],
     agentProgressSummaries: true,
   };
+
+  if (apiBaseUrl) {
+    options.env = { ...process.env, ANTHROPIC_BASE_URL: apiBaseUrl };
+  }
 
   if (systemPrompt) {
     options.systemPrompt = {
@@ -829,7 +837,7 @@ async function handleCreate(cmd: CreateCommand | ResumeCommand | ForkCommand): P
     pendingPermissions: new Map(),
     pendingAskUser: null,
     permState,
-    _config: { cwd: cwd || process.cwd(), model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins },
+    _config: { cwd: cwd || process.cwd(), model, effort, systemPrompt, permMode, skipPerms, allowedTools, plugins, apiBaseUrl },
     _sessionId: "",
     _interrupted: false,
     _pushInput: (text: string | null) => {

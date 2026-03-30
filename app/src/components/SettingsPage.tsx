@@ -411,6 +411,18 @@ export default memo(function SettingsPage({ tabId, onRequestClose, isActive, set
                     </Switch.Root>
                   </div>
                   <p className="modal-hint">When ON, marketplace plugins are also available in standalone Claude Code CLI sessions.</p>
+                  <div className="settings-toggle-row" style={{ flexDirection: "column", alignItems: "stretch", gap: "var(--space-2)" }}>
+                    <span>API Base URL</span>
+                    <input
+                      type="text"
+                      className="settings-input"
+                      placeholder="https://api.anthropic.com"
+                      value={settings.api_base_url || ""}
+                      onChange={(e) => onUpdate({ api_base_url: e.target.value })}
+                      spellCheck={false}
+                    />
+                  </div>
+                  <p className="modal-hint">Custom Anthropic-compatible API endpoint. Leave empty to use the official API. Applies to new sessions only.</p>
         </div>
           )}
 
