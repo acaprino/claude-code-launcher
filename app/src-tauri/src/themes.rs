@@ -41,21 +41,8 @@ pub struct Theme {
     pub ui_font_size: Option<f64>,
 }
 
-/// Locate the `data/themes` directory.
-/// Production: next to the exe.  Dev: relative to the crate root.
 fn themes_dir() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("data").join("themes");
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    // Dev fallback: data/ lives at the crate root (src-tauri/data/themes/)
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("data")
-        .join("themes")
+    crate::paths::bundled_data_dir("themes")
 }
 
 /// Read all `.json` theme files from the themes directory.

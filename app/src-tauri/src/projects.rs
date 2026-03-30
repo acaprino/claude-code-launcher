@@ -9,7 +9,7 @@ use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+use crate::paths::CREATE_NO_WINDOW;
 
 const DEFAULT_PROJECTS_DIR: &str = r"D:\Projects";
 
@@ -100,6 +100,7 @@ impl Default for Settings {
             vertical_tabs: false,
             sidebar_width: default_sidebar_width(),
             session_panel_open: false,
+            api_base_url: String::new(),
             extra: HashMap::new(),
         }
     }
@@ -241,7 +242,12 @@ fn sync_security_gate(enabled: bool) {
         log_warn!("projects: cannot sync security_gate — no home dir");
         return;
     };
-    let config_path = home.join(".claude").join("claude-code-gui-config.json");
+    let claude_dir = home.join(".claude");
+    if let Err(e) = fs::create_dir_all(&claude_dir) {
+        log_warn!("projects: cannot create .claude dir: {e}");
+        return;
+    }
+    let config_path = claude_dir.join("claude-code-gui-config.json");
 
     // Read existing config or create new
     let mut config: serde_json::Value = fs::read_to_string(&config_path)
@@ -253,8 +259,15 @@ fn sync_security_gate(enabled: bool) {
         obj.insert("securityGate".to_string(), serde_json::Value::Bool(enabled));
     }
 
-    if let Ok(data) = serde_json::to_string_pretty(&config) {
-        let _ = fs::write(&config_path, data);
+    match serde_json::to_string_pretty(&config) {
+        Ok(data) => {
+            // Atomic write: tmp + rename
+            let tmp = config_path.with_extension("json.tmp");
+            if let Err(e) = fs::write(&tmp, &data).and_then(|_| fs::rename(&tmp, &config_path)) {
+                log_warn!("projects: failed to sync security_gate: {e}");
+            }
+        }
+        Err(e) => log_warn!("projects: failed to serialize security_gate config: {e}"),
     }
 }
 
@@ -288,7 +301,7 @@ pub fn record_usage(project_path: &str) -> io::Result<()> {
     let mut usage = load_usage();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs_f64();
 
     let entry = usage

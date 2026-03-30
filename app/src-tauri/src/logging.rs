@@ -138,7 +138,7 @@ fn timestamp() -> String {
 
     // Date from epoch
     let days = total_secs / 86400;
-    let (year, month, day) = days_to_date(days);
+    let (year, month, day) = crate::paths::days_to_date(days);
 
     // Time of day (UTC)
     let secs_in_day = total_secs % 86400;
@@ -149,24 +149,9 @@ fn timestamp() -> String {
     format!("{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
 }
 
-fn days_to_date(days: u64) -> (u64, u64, u64) {
-    // Civil date from days since 1970-01-01 (Algorithm from Howard Hinnant)
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::days_to_date;
+    use crate::paths::days_to_date;
 
     #[test]
     fn test_epoch() {
@@ -177,7 +162,7 @@ mod tests {
     fn test_known_dates() {
         assert_eq!(days_to_date(18262), (2020, 1, 1));
         assert_eq!(days_to_date(18628), (2021, 1, 1));
-        assert_eq!(days_to_date(19723), (2023, 12, 31));
+        assert_eq!(days_to_date(19723), (2024, 1, 1));
     }
 
     #[test]

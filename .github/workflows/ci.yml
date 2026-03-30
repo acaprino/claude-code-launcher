@@ -49,11 +49,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+      - run: cargo fmt -- --check
+        working-directory: app/src-tauri
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: app/src-tauri
       - run: cargo test
+        working-directory: app/src-tauri
+      - run: cargo install cargo-audit
+      - run: cargo audit
+        working-directory: app/src-tauri
+
+  build:
+    name: Build verification
+    runs-on: windows-latest
+    needs: [frontend, sidecar, rust]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - run: cargo build --release
         working-directory: app/src-tauri

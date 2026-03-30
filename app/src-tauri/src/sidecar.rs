@@ -13,7 +13,7 @@ use windows::Win32::System::JobObjects::*;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+use crate::paths::CREATE_NO_WINDOW;
 
 /// Events emitted by the sidecar, forwarded to the frontend via Tauri IPC.
 #[derive(Clone, Debug, Serialize)]
@@ -160,17 +160,24 @@ pub struct SidecarManager {
 
 /// RAII wrapper for a Win32 Job Object handle.
 struct JobHandle(HANDLE);
+// SAFETY: Win32 Job Object handles are thread-safe. CloseHandle and
+// TerminateJobObject can be called from any thread. The handle is
+// never aliased — only used for close/terminate in Drop and shutdown().
 unsafe impl Send for JobHandle {}
 unsafe impl Sync for JobHandle {}
 impl Drop for JobHandle {
     fn drop(&mut self) {
+        // SAFETY: self.0 is a valid Job Object handle from CreateJobObjectW.
+        // Drop is called at most once.
         unsafe { let _ = windows::Win32::Foundation::CloseHandle(self.0); }
     }
 }
 
 impl SidecarManager {
-    pub fn new() -> Self {
-        let manager = Self {
+    /// Create a SidecarManager without starting the sidecar.
+    /// Call `init()` on a background thread to find node and start the process.
+    pub fn new_deferred() -> Self {
+        Self {
             stdin: Mutex::new(None),
             channels: Arc::new(RwLock::new(HashMap::new())),
             oneshots: Arc::new(Mutex::new(HashMap::new())),
@@ -180,23 +187,25 @@ impl SidecarManager {
             _job: Mutex::new(None),
             node_path: Mutex::new(None),
             restart_lock: Mutex::new(()),
-        };
+        }
+    }
 
-        // Try to find node.exe and start the sidecar
+    /// Find node.exe, install sidecar deps if needed, and start the sidecar process.
+    /// Safe to call from a background thread — the window can appear immediately.
+    pub fn init(&self) {
         match find_node() {
             Some(node_path) => {
                 log_info!("sidecar: found node at {}", node_path);
-                *manager.node_path.lock().unwrap_or_else(|e| e.into_inner()) = Some(node_path.clone());
+                *self.node_path.lock().unwrap_or_else(|e| e.into_inner()) = Some(node_path.clone());
 
-                // Ensure sidecar dependencies are installed
-                if let Err(e) = manager.ensure_deps(&node_path) {
+                if let Err(e) = self.ensure_deps(&node_path) {
                     log_error!("sidecar: failed to install dependencies: {e}");
-                    return manager;
+                    return;
                 }
 
-                match manager.start_sidecar(&node_path) {
+                match self.start_sidecar(&node_path) {
                     Ok(()) => {
-                        manager.available.store(true, Ordering::SeqCst);
+                        self.available.store(true, Ordering::SeqCst);
                         log_info!("sidecar: started successfully");
                     }
                     Err(e) => {
@@ -208,8 +217,6 @@ impl SidecarManager {
                 log_warn!("sidecar: node.exe not found — agent SDK unavailable");
             }
         }
-
-        manager
     }
 
     /// Ensure sidecar node_modules are installed. Runs `npm install` if missing.
@@ -237,7 +244,7 @@ impl SidecarManager {
         };
 
         let output = Command::new(&npm_cmd)
-            .args(["install", "--production"])
+            .args(["install", "--omit=dev"])
             .current_dir(&sidecar_dir)
             .creation_flags(CREATE_NO_WINDOW)
             .output()
@@ -508,7 +515,11 @@ impl SidecarManager {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines() {
                     match line {
-                        Ok(l) => log_info!("sidecar stderr: {l}"),
+                        Ok(l) => {
+                            // Truncate to prevent disk fill from malicious/buggy stderr
+                            let truncated = if l.len() > 4096 { &l[..4096] } else { &l };
+                            log_info!("sidecar stderr: {truncated}");
+                        }
                         Err(e) => {
                             log_warn!("sidecar stderr read error: {e}");
                             break;
@@ -617,6 +628,8 @@ impl SidecarManager {
         // child processes (agent SDK subprocesses) in one shot.
         if let Some(job) = self._job.lock().unwrap_or_else(|e| e.into_inner()).take() {
             log_info!("sidecar: terminating job object (kills process tree)");
+            // SAFETY: job.0 is a valid handle from CreateJobObjectW;
+            // termination is idempotent.
             unsafe {
                 let _ = TerminateJobObject(job.0, 1);
             }
@@ -637,6 +650,9 @@ impl Drop for SidecarManager {
 /// Create a Win32 Job Object configured to kill all processes on close,
 /// and assign the given child process to it.
 fn create_job_for_child(child: &Child) -> Result<JobHandle, String> {
+    // SAFETY: All Win32 calls use valid handles. CreateJobObjectW returns a new
+    // handle, SetInformationJobObject configures it, and AssignProcessToJobObject
+    // binds the child process. The child's raw handle is valid while Child is alive.
     unsafe {
         let job = CreateJobObjectW(None, windows::core::PCWSTR::null())
             .map_err(|e| format!("CreateJobObjectW: {e}"))?;

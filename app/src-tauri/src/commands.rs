@@ -121,6 +121,8 @@ pub fn set_window_corner_preference(window: tauri::WebviewWindow, retro: bool) {
     let RawWindowHandle::Win32(h) = handle.as_raw() else { return };
     let hwnd = HWND(h.hwnd.get() as *mut core::ffi::c_void);
     let preference = if retro { DWMWCP_DONOTROUND } else { DWMWCP_DEFAULT };
+    // SAFETY: HWND is valid from raw_window_handle. DwmSetWindowAttribute
+    // accepts any valid HWND and the pointer/size are correct for the type.
     unsafe {
         let _ = DwmSetWindowAttribute(
             hwnd,
@@ -208,6 +210,7 @@ pub async fn list_directory(path: Option<String>) -> Result<Vec<DirEntry>, Strin
         // If no path, return Windows drive roots using GetLogicalDrives() WinAPI
         // to avoid blocking on disconnected network/removable drives.
         if path.is_none() {
+            // SAFETY: GetLogicalDrives has no preconditions and cannot fail unsafely.
             let mask = unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
             let mut drives = Vec::new();
             for i in 0..26u32 {
@@ -304,12 +307,14 @@ pub async fn delete_prompt(id: String) -> Result<(), String> {
 
 const ALLOWED_PERM_MODES: &[&str] = &["plan", "acceptEdits", "bypassPermissions"];
 
-/// Validate a permission mode string, falling back to "plan" for unknown values.
+/// Validate a permission mode string, falling back to "plan" for unknown/empty values.
 fn validate_perm_mode(mode: &str) -> &str {
-    if mode.is_empty() || ALLOWED_PERM_MODES.contains(&mode) {
+    if !mode.is_empty() && ALLOWED_PERM_MODES.contains(&mode) {
         mode
     } else {
-        log_warn!("Invalid perm_mode '{}', falling back to 'plan'", mode);
+        if !mode.is_empty() {
+            log_warn!("Invalid perm_mode '{}', falling back to 'plan'", mode);
+        }
         "plan"
     }
 }
@@ -328,21 +333,19 @@ fn validate_api_base_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Ensure `project_path` is a valid, existing directory — creating it if necessary.
-/// Rejects UNC paths and path traversal (`..` components) after canonicalization.
+/// Ensure `project_path` is a valid, existing directory.
+/// Rejects UNC paths and path traversal (`..` components).
+/// Does NOT create arbitrary directories — the directory must already exist.
 fn ensure_project_dir(project_path: &str) -> Result<(), String> {
     if crate::projects::is_unc(project_path) {
         return Err("UNC paths are not supported".to_string());
     }
-    // Reject raw ".." before creating dirs, then verify canonicalized path
     if project_path.contains("..") {
         return Err("Path traversal is not allowed".to_string());
     }
     let dir = std::path::Path::new(project_path);
     if !dir.is_dir() {
-        log_warn!("ensure_project_dir: creating missing directory: {project_path}");
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("Failed to create project directory: {e}"))?;
+        return Err(format!("Project directory does not exist: {project_path}"));
     }
     // Verify canonicalized path has no traversal components
     let canonical = dir.canonicalize()
@@ -353,6 +356,30 @@ fn ensure_project_dir(project_path: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Shared validation and channel registration for spawn/resume/fork commands.
+fn prepare_agent(
+    sidecar: &SidecarManager,
+    tab_id: &str,
+    project_path: &str,
+    perm_mode: &str,
+    api_base_url: &str,
+    on_event: Channel<AgentEvent>,
+) -> Result<String, String> {
+    if !sidecar.try_restart() {
+        return Err("Agent SDK not available (Node.js not found)".to_string());
+    }
+    ensure_project_dir(project_path)?;
+    let perm_mode = validate_perm_mode(perm_mode).to_string();
+    validate_api_base_url(api_base_url)?;
+    sidecar.register_channel(tab_id, on_event);
+    Ok(perm_mode)
+}
+
+/// Convert an optional string to a JSON value (null if empty).
+fn opt_str(s: &str) -> serde_json::Value {
+    if s.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(s.to_string()) }
 }
 
 #[tauri::command]
@@ -369,29 +396,22 @@ pub fn spawn_agent(
     api_base_url: String,
     on_event: Channel<AgentEvent>,
 ) -> Result<(), String> {
-    if !sidecar.try_restart() {
-        return Err("Agent SDK not available (Node.js not found)".to_string());
-    }
-    ensure_project_dir(&project_path)?;
     if system_prompt.len() > 100_000 {
-        return Err(format!("System prompt too large (max 100000 bytes)"));
+        return Err("System prompt too large (max 100000 bytes)".to_string());
     }
-    let perm_mode = validate_perm_mode(&perm_mode);
-    validate_api_base_url(&api_base_url)?;
+    let perm_mode = prepare_agent(&sidecar, &tab_id, &project_path, &perm_mode, &api_base_url, on_event)?;
     log_info!("spawn_agent: tab={tab_id}, project={project_path}, model={model}");
-
-    sidecar.register_channel(&tab_id, on_event);
     sidecar.send_command(&serde_json::json!({
         "cmd": "create",
         "tabId": tab_id,
         "cwd": project_path,
-        "model": if model.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(model) },
+        "model": opt_str(&model),
         "effort": effort,
-        "systemPrompt": if system_prompt.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(system_prompt) },
+        "systemPrompt": opt_str(&system_prompt),
         "permMode": perm_mode,
         "plugins": plugins,
         "disabledHooks": disabled_hooks,
-        "apiBaseUrl": if api_base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(api_base_url) },
+        "apiBaseUrl": opt_str(&api_base_url),
     }))
 }
 
@@ -439,25 +459,19 @@ pub fn agent_resume(
     api_base_url: String,
     on_event: Channel<AgentEvent>,
 ) -> Result<(), String> {
-    if !sidecar.try_restart() {
-        return Err("Agent SDK not available".to_string());
-    }
-    ensure_project_dir(&project_path)?;
-    let perm_mode = validate_perm_mode(&perm_mode);
-    validate_api_base_url(&api_base_url)?;
+    let perm_mode = prepare_agent(&sidecar, &tab_id, &project_path, &perm_mode, &api_base_url, on_event)?;
     log_info!("agent_resume: tab={tab_id}, session={session_id}");
-    sidecar.register_channel(&tab_id, on_event);
     sidecar.send_command(&serde_json::json!({
         "cmd": "resume",
         "tabId": tab_id,
         "sessionId": session_id,
         "cwd": project_path,
-        "model": if model.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(model) },
+        "model": opt_str(&model),
         "effort": effort,
         "permMode": perm_mode,
         "plugins": plugins,
         "disabledHooks": disabled_hooks,
-        "apiBaseUrl": if api_base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(api_base_url) },
+        "apiBaseUrl": opt_str(&api_base_url),
     }))
 }
 
@@ -475,25 +489,19 @@ pub fn agent_fork(
     api_base_url: String,
     on_event: Channel<AgentEvent>,
 ) -> Result<(), String> {
-    if !sidecar.try_restart() {
-        return Err("Agent SDK not available".to_string());
-    }
-    ensure_project_dir(&project_path)?;
-    let perm_mode = validate_perm_mode(&perm_mode);
-    validate_api_base_url(&api_base_url)?;
+    let perm_mode = prepare_agent(&sidecar, &tab_id, &project_path, &perm_mode, &api_base_url, on_event)?;
     log_info!("agent_fork: tab={tab_id}, session={session_id}");
-    sidecar.register_channel(&tab_id, on_event);
     sidecar.send_command(&serde_json::json!({
         "cmd": "fork",
         "tabId": tab_id,
         "sessionId": session_id,
         "cwd": project_path,
-        "model": if model.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(model) },
+        "model": opt_str(&model),
         "effort": effort,
         "permMode": perm_mode,
         "plugins": plugins,
         "disabledHooks": disabled_hooks,
-        "apiBaseUrl": if api_base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(api_base_url) },
+        "apiBaseUrl": opt_str(&api_base_url),
     }))
 }
 
@@ -662,8 +670,11 @@ const BLOCKED_DIRS: &[&str] = &[
 ];
 
 /// Block sensitive filenames using prefix/suffix matching to catch variants.
+/// Strips NTFS ADS suffixes (everything after first ':') before checking.
 fn is_blocked_filename(name: &str) -> bool {
-    let lower = name.to_lowercase();
+    // Strip NTFS Alternate Data Stream suffix (e.g., "id_rsa:$DATA" → "id_rsa")
+    let base = name.split(':').next().unwrap_or(name);
+    let lower = base.to_lowercase();
     // Block all .env variants (.env, .env.local, .env.test, .env.ci, etc.)
     if lower == ".env" || lower.starts_with(".env.") { return true; }
     // Block SSH key files (private and public)
@@ -681,10 +692,14 @@ fn is_blocked_filename(name: &str) -> bool {
     false
 }
 
-/// Validate an external file path: canonicalize, reject UNC, block sensitive dirs and files.
+/// Validate an external file path: canonicalize, reject UNC/ADS, block sensitive dirs and files.
 fn validate_external_path(path: &str) -> Result<std::path::PathBuf, String> {
     if crate::projects::is_unc(path) {
         return Err("UNC paths are not supported".to_string());
+    }
+    // Block NTFS Alternate Data Streams (e.g., "file.pem:stream" bypasses extension checks)
+    if path.chars().filter(|c| *c == ':').count() > 1 {
+        return Err("NTFS alternate data streams are not supported".to_string());
     }
     let p = std::path::Path::new(path)
         .canonicalize()
@@ -733,7 +748,7 @@ pub fn read_external_file(path: String) -> Result<String, String> {
 
 // ── Claude CLI commands ─────────────────────────────────────────────
 
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+use crate::paths::CREATE_NO_WINDOW;
 const CLI_TIMEOUT_SECS: u64 = 30;
 
 /// Find the `claude` CLI executable on the system.
@@ -957,5 +972,32 @@ mod tests {
             }
         });
         assert!(has_blocked);
+    }
+
+    #[test]
+    fn blocked_files_blocks_ntfs_ads_variants() {
+        // NTFS Alternate Data Stream suffixes must not bypass filename checks
+        assert!(is_blocked_filename(".env:Zone.Identifier"));
+        assert!(is_blocked_filename("id_rsa:$DATA"));
+        assert!(is_blocked_filename("server.pem:stream"));
+        assert!(is_blocked_filename("credentials.json:hidden"));
+    }
+
+    #[test]
+    fn validate_perm_mode_empty_falls_back() {
+        assert_eq!(validate_perm_mode(""), "plan");
+    }
+
+    #[test]
+    fn validate_perm_mode_valid_passes_through() {
+        assert_eq!(validate_perm_mode("plan"), "plan");
+        assert_eq!(validate_perm_mode("acceptEdits"), "acceptEdits");
+        assert_eq!(validate_perm_mode("bypassPermissions"), "bypassPermissions");
+    }
+
+    #[test]
+    fn validate_perm_mode_invalid_falls_back() {
+        assert_eq!(validate_perm_mode("hackMode"), "plan");
+        assert_eq!(validate_perm_mode("Plan"), "plan");
     }
 }

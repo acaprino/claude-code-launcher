@@ -5,6 +5,7 @@ mod logging;
 
 mod commands;
 mod marketplace;
+mod paths;
 mod projects;
 mod prompts;
 mod sidecar;
@@ -42,8 +43,9 @@ fn main() {
     log_info!("Claude Code GUI version: {}", env!("CARGO_PKG_VERSION"));
     log_info!("Data directory: {}", crate::projects::data_dir().display());
 
-    log_info!("Initializing sidecar manager");
-    let sidecar_manager = Arc::new(SidecarManager::new());
+    // Create the sidecar manager without blocking — init happens in setup().
+    log_info!("Creating sidecar manager (deferred init)");
+    let sidecar_manager = Arc::new(SidecarManager::new_deferred());
 
     let sidecar_for_cleanup = Arc::clone(&sidecar_manager);
 
@@ -64,8 +66,18 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(sidecar_manager)
-        .setup(|app| {
+        .manage(sidecar_manager.clone())
+        .setup(move |app| {
+            // Initialize sidecar on a background thread so the window appears immediately.
+            // npm install (first run) can take 5-30 seconds — don't block the UI.
+            let sidecar_bg = sidecar_manager.clone();
+            std::thread::Builder::new()
+                .name("sidecar-init".into())
+                .spawn(move || {
+                    sidecar_bg.init();
+                })
+                .expect("failed to spawn sidecar init thread");
+
             log_info!("setup: loading initial settings");
             let handle = app.handle().clone();
             let settings = projects::load_settings();
@@ -92,6 +104,8 @@ fn main() {
                     use webview2_com::Microsoft::Web::WebView2::Win32::*;
                     use webview2_com::PermissionRequestedEventHandler;
                     let controller = webview.controller();
+                    // SAFETY: controller and CoreWebView2 objects are valid within
+                    // the with_webview callback. COM method calls follow the documented API.
                     unsafe {
                         if let Ok(core) = controller.CoreWebView2() {
                             let handler = PermissionRequestedEventHandler::create(
@@ -121,6 +135,8 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 if let Err(e) = window.with_webview(|webview| {
                     let controller = webview.controller();
+                    // SAFETY: controller and CoreWebView2 objects are valid within
+                    // the with_webview callback.
                     unsafe {
                         if let Ok(settings) = controller.CoreWebView2().and_then(|core| core.Settings()) {
                             let _ = settings.SetAreDefaultContextMenusEnabled(true);

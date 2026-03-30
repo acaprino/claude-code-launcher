@@ -4,20 +4,8 @@ use serde::Serialize;
 
 const MARKETPLACE_NAME: &str = "alfio-claude-plugins";
 
-/// Locate the `data/marketplace` directory.
-/// Production: next to the exe.  Dev: relative to the crate root.
 fn marketplace_dir() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("data").join("marketplace");
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("data")
-        .join("marketplace")
+    crate::paths::bundled_data_dir("marketplace")
 }
 
 /// Return absolute paths to every plugin directory bundled under data/marketplace/plugins/.
@@ -109,8 +97,12 @@ pub fn enable_global() -> Result<(), String> {
 
     let data = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("serialize settings: {e}"))?;
-    fs::write(&settings_path, data)
-        .map_err(|e| format!("write settings.json: {e}"))?;
+    // Atomic write: tmp + rename to prevent corruption on crash
+    let tmp = settings_path.with_extension("json.tmp");
+    fs::write(&tmp, &data)
+        .map_err(|e| format!("write settings tmp: {e}"))?;
+    fs::rename(&tmp, &settings_path)
+        .map_err(|e| format!("rename settings: {e}"))?;
     log_info!("marketplace: enabled {} plugins globally", plugin_names.len());
     Ok(())
 }
@@ -150,8 +142,12 @@ pub fn disable_global() -> Result<(), String> {
 
     let out = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("serialize settings: {e}"))?;
-    fs::write(&settings_path, out)
-        .map_err(|e| format!("write settings.json: {e}"))?;
+    // Atomic write: tmp + rename to prevent corruption on crash
+    let tmp = settings_path.with_extension("json.tmp");
+    fs::write(&tmp, &out)
+        .map_err(|e| format!("write settings tmp: {e}"))?;
+    fs::rename(&tmp, &settings_path)
+        .map_err(|e| format!("rename settings: {e}"))?;
     log_info!("marketplace: removed {} plugins from global settings", keys_to_remove.len());
     Ok(())
 }

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicerapp/tauri/refs/heads/dev/crates/tauri-cli/config.schema.json",
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/config.schema.json",
   "productName": "Claude Code GUI",
   "version": "1.0.0",
   "identifier": "com.claude-code-gui.app",

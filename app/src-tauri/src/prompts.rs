@@ -14,24 +14,10 @@ pub struct PromptEntry {
     pub content: String,
 }
 
-// Keep old name as alias for the command return type
 pub type BuiltinPrompt = PromptEntry;
 
-/// Locate the `data/prompts` directory.
-/// Production: next to the exe.  Dev: relative to the crate root.
 fn prompts_dir() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("data").join("prompts");
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    // Dev fallback: data/ lives at the crate root (src-tauri/data/prompts/)
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("data")
-        .join("prompts")
+    crate::paths::bundled_data_dir("prompts")
 }
 
 /// Parse YAML-style `---` frontmatter from a raw markdown string.

@@ -253,12 +253,11 @@ The `SidecarManager` manages a single long-lived Node.js child process that wrap
 | Field | Type | Purpose |
 |-------|------|---------|
 | `stdin` | `Mutex<Option<ChildStdin>>` | Write end of sidecar stdin pipe |
-| `channels` | `Arc<Mutex<HashMap<String, Channel<AgentEvent>>>>` | Per-tab event channels |
-| `oneshots` | `Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>` | One-shot responses for queries (list_sessions, get_messages, commands) |
+| `channels` | `Arc<RwLock<HashMap<String, Channel<AgentEvent>>>>` | Per-tab event channels |
+| `oneshots` | `Arc<RwLock<HashMap<String, oneshot::Sender<Value>>>>` | One-shot responses for queries (list_sessions, get_messages, commands) |
 | `available` | `AtomicBool` | Whether sidecar is running |
 | `_process` | `Mutex<Option<Child>>` | Sidecar child process handle |
 | `_job` | `Mutex<Option<JobHandle>>` | Win32 Job Object -- kills entire process tree on close |
-| `unavailable_reason` | `Mutex<Option<String>>` | Human-readable reason if unavailable |
 
 **Initialization** (`SidecarManager::new()`):
 
@@ -294,7 +293,7 @@ pub enum AgentEvent {
     Todo { todos: serde_json::Value },
     Autocomplete { suggestions: Vec<String>, seq: u32 },
     RateLimit { utilization: f64 },
-    CommandsInit { commands: serde_json::Value, agents: serde_json::Value },
+    CommandsInit { commands: serde_json::Value, agents: serde_json::Value, models: serde_json::Value },
     TaskStarted { task_id: String, description: String, task_type: String },
     TaskProgress { task_id: String, description: String, total_tokens: u64, tool_uses: u32, duration_ms: u64, last_tool_name: String, summary: String },
     TaskNotification { task_id: String, status: String, summary: String, total_tokens: u64, tool_uses: u32, duration_ms: u64 },
@@ -316,7 +315,6 @@ Tagged enum deserialized with `#[serde(tag = "evt")]`. Each variant declares onl
 |--------|-----------|-------------|
 | `send_command` | `(&self, cmd: &Value) -> Result<(), String>` | Serializes JSON, writes to sidecar stdin with newline, flushes |
 | `register_channel` | `(&self, tab_id: &str, channel: Channel<AgentEvent>)` | Associates a Tauri Channel with a tab ID for event routing |
-| `unregister_channel` | `(&self, tab_id: &str)` | Removes a tab's channel |
 | `register_oneshot` | `(&self, key: &str) -> Receiver<Value>` | Creates a one-shot channel for query responses |
 | `shutdown` | `(&self)` | Drops stdin, terminates Win32 Job Object (kills process tree), then kills direct child as fallback |
 
@@ -370,8 +368,8 @@ All data files are stored in `dirs::data_local_dir() / "claude-code-gui"` (typic
 | Settings | `claude-code-gui-settings.json` | User preferences |
 | Settings backup | `claude-code-gui-settings.json.bak` | Previous settings |
 | Usage data | `claude-code-gui-usage.json` | Project usage tracking |
-| Session data | `figtree-session.json` | Tab restore state |
-| Log file | `figtree.log` | Application log (next to exe) |
+| Session data | `claude-code-gui-session.json` | Tab restore state |
+| Log file | `claude-code-gui.log` | Application log (next to exe) |
 
 #### Settings struct (`projects.rs`)
 
@@ -388,7 +386,7 @@ All data files are stored in `dirs::data_local_dir() / "claude-code-gui"` (typic
 | `autocompact` | `bool` | `false` |
 | `active_prompt_ids` | `Vec<String>` | `[]` |
 | `security_gate` | `bool` | `true` |
-| `project_dirs` | `Vec<String>` | `["D:\\Projects"]` or `FIGTREE_PROJECTS_DIR` env var |
+| `project_dirs` | `Vec<String>` | `["D:\\Projects"]` or `CLAUDE_CODE_GUI_PROJECTS_DIR` env var |
 | `single_project_dirs` | `Vec<String>` | `[]` |
 | `project_labels` | `HashMap<String, String>` | `{}` |
 | `vertical_tabs` | `bool` | `false` |
@@ -1511,7 +1509,7 @@ The `spawn_agent` (and `agent_resume`, `agent_fork`) commands accept a Tauri `Ch
 
 ### Settings Schema
 
-**Storage:** `%LOCALAPPDATA%\figtree\figtree-settings.json`
+**Storage:** `%LOCALAPPDATA%\claude-code-gui\claude-code-gui-settings.json`
 
 ```json
 {
@@ -1597,7 +1595,7 @@ Themes are loaded dynamically from JSON files in `data/themes/`. See [Theme Syst
 
 | Variable | Used In | Purpose |
 |----------|---------|---------|
-| `FIGTREE_PROJECTS_DIR` | `projects.rs` | Override default project directory |
+| `CLAUDE_CODE_GUI_PROJECTS_DIR` | `projects.rs` | Override default project directory |
 | `ANTHROPIC_API_KEY` | `sidecar.js` | API key for autocomplete (falls back to Claude OAuth token from `~/.claude/.credentials.json`) |
 
 ---
@@ -1610,7 +1608,7 @@ Themes are loaded dynamically from JSON files in `data/themes/`. See [Theme Syst
 - **Three-state input machine:** The session controller manages a three-state machine (idle / awaiting_input / processing) that controls which user input is accepted and how it's routed. Permissions are handled as inline cards in the message stream, not as a separate state.
 - **Streaming via refs:** Streaming assistant text and thinking content are stored in refs (not state) with tick counters for efficient re-renders. This avoids creating new React state on every streaming chunk.
 - **Permission routing:** The `permMode` setting controls SDK permission behavior. When not bypassing, the sidecar's `canUseTool` callback emits a permission event (with optional `permissionSuggestions`) and blocks on a Promise. The frontend renders an interactive `PermissionCard` with session-allow options, and the response (with `toolUseId` and optional `updatedPermissions`) resolves the Promise in the sidecar.
-- **Process tree cleanup:** The sidecar child process is assigned to a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. When Figtree exits, terminating the job object kills all descendant processes (Agent SDK subprocesses), preventing orphaned `node.exe` processes.
+- **Process tree cleanup:** The sidecar child process is assigned to a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. When Claude Code GUI exits, terminating the job object kills all descendant processes (Agent SDK subprocesses), preventing orphaned `node.exe` processes.
 - **Tool grouping:** Consecutive tool use/result messages are grouped into collapsible `ToolGroup` / `TermToolGroup` components to reduce visual noise.
 - **Theme crossfade:** Structural CSS containers transition `background-color` and `color` on theme switch (150ms ease-out).
 - **Tab taglines:** The session controller updates `tagline` on each agent state change (thinking, tool use, permission request), giving users a quick summary of what the agent is doing without switching tabs.
@@ -1835,7 +1833,7 @@ app/
       usage_stats.rs            # Token usage statistics
       logging.rs                # File + stderr logging
       watcher.rs                # Filesystem watcher for project dirs
-      marketplace.rs            # Figtree marketplace sync
+      marketplace.rs            # Claude Code GUI marketplace sync
       autocomplete.rs           # File path autocomplete
     data/
       themes/                   # Theme JSON files

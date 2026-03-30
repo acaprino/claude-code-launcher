@@ -154,6 +154,8 @@ pub fn compute_usage(days_back: u64) -> Result<TokenUsageStats, String> {
             Err(_) => continue,
         };
         let reader = BufReader::new(file);
+        // Compute project name once per file, not per line
+        let proj_name = project_from_path(path);
 
         for line in reader.lines() {
             let line = match line {
@@ -238,8 +240,7 @@ pub fn compute_usage(days_back: u64) -> Result<TokenUsageStats, String> {
             mdl.cost += cost;
 
             // Accumulate by project
-            let proj_name = project_from_path(path);
-            let proj = project_map.entry(proj_name).or_insert_with(Accum::new);
+            let proj = project_map.entry(proj_name.clone()).or_insert_with(Accum::new);
             proj.input_tokens += input;
             proj.output_tokens += output;
             proj.cache_creation_tokens += cache_create;
@@ -364,18 +365,7 @@ fn system_time_to_date(t: SystemTime) -> String {
 }
 
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
+    crate::paths::days_to_date(days)
 }
 
 fn empty_stats() -> TokenUsageStats {
