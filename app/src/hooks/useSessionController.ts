@@ -222,6 +222,7 @@ export function useSessionController(props: SessionControllerProps): SessionCont
     }
     setMessages([]);
     setInputState("idle");
+    setTeamState({ active: false, members: [], tasks: [], messages: [] });
     let cancelled = false;
 
     // Use SDK models/efforts if available, fallback to hardcoded defaults
@@ -288,8 +289,9 @@ export function useSessionController(props: SessionControllerProps): SessionCont
           const output = typeof event.output === "string" ? event.output : JSON.stringify(event.output ?? "");
           // Find last running agent task
           let runningTaskId = "";
-          for (let i = agentTasksHook.tasks.length - 1; i >= 0; i--) {
-            if (agentTasksHook.tasks[i].status === "running" && agentTasksHook.tasks[i].taskId.startsWith("agent-")) { runningTaskId = agentTasksHook.tasks[i].taskId; break; }
+          const currentTasks = agentTasksHook.tasksRef.current;
+          for (let i = currentTasks.length - 1; i >= 0; i--) {
+            if (currentTasks[i].status === "running" && currentTasks[i].taskId.startsWith("agent-")) { runningTaskId = currentTasks[i].taskId; break; }
           }
           if (runningTaskId) {
             agentTasksHook.completeTask(runningTaskId, event.success, output.slice(0, 100));
@@ -429,21 +431,29 @@ export function useSessionController(props: SessionControllerProps): SessionCont
         });
       } else if (event.type === "taskProgress") {
         agentTasksHook.onTaskProgress(event.taskId, event.description, event.totalTokens, event.toolUses, event.durationMs, event.lastToolName, event.summary);
-        setTeamState(prev => ({
-          ...prev,
-          tasks: prev.tasks.map(t => t.id === event.taskId ? { ...t, description: event.summary || t.description } : t),
-          members: prev.members.map(m => m.agentId === event.taskId ? { ...m, status: "working" as const } : m),
-        }));
+        setTeamState(prev => {
+          const newDesc = event.summary || undefined;
+          const taskChanged = newDesc && prev.tasks.some(t => t.id === event.taskId && t.description !== newDesc);
+          const memberChanged = prev.members.some(m => m.agentId === event.taskId && m.status !== "working");
+          if (!taskChanged && !memberChanged) return prev; // bail out — no re-render
+          return {
+            ...prev,
+            tasks: taskChanged ? prev.tasks.map(t => t.id === event.taskId ? { ...t, description: newDesc! } : t) : prev.tasks,
+            members: memberChanged ? prev.members.map(m => m.agentId === event.taskId ? { ...m, status: "working" as const } : m) : prev.members,
+          };
+        });
       } else if (event.type === "taskNotification") {
         agentTasksHook.onTaskNotification(event.taskId, event.status, event.summary, event.totalTokens, event.toolUses, event.durationMs);
         setTeamState(prev => {
-          const taskStatus = event.status === "completed" ? "completed" as const : "pending" as const;
-          const memberStatus = event.status === "completed" ? "idle" as const : event.status === "failed" ? "disconnected" as const : "idle" as const;
+          const taskStatus = event.status === "completed" ? "completed" as const : event.status === "failed" || event.status === "stopped" ? "completed" as const : "pending" as const;
+          const memberStatus = event.status === "completed" ? "idle" as const : "disconnected" as const;
+          const newMsgs = [...prev.messages, { from: event.taskId, to: "lead", content: event.summary, timestamp: Date.now() }];
+          if (newMsgs.length > 100) newMsgs.splice(0, newMsgs.length - 100);
           const updated = {
             ...prev,
             tasks: prev.tasks.map(t => t.id === event.taskId ? { ...t, status: taskStatus, description: event.summary || t.description } : t),
             members: prev.members.map(m => m.agentId === event.taskId ? { ...m, status: memberStatus } : m),
-            messages: [...prev.messages, { from: event.taskId, to: "lead", content: event.summary, timestamp: Date.now() }],
+            messages: newMsgs,
           };
           const allDone = updated.members.every(m => m.status === "idle" || m.status === "disconnected");
           if (allDone && updated.members.length > 0) updated.active = false;

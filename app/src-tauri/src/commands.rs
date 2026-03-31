@@ -400,6 +400,9 @@ pub fn spawn_agent(
     if system_prompt.len() > 100_000 {
         return Err("System prompt too large (max 100000 bytes)".to_string());
     }
+    if !agent_name.is_empty() && !agent_name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err("Invalid agent name: only alphanumeric, hyphen, and underscore allowed".to_string());
+    }
     let perm_mode = prepare_agent(&sidecar, &tab_id, &project_path, &perm_mode, &api_base_url, on_event)?;
     log_info!("spawn_agent: tab={tab_id}, project={project_path}, model={model}");
     sidecar.send_command(&serde_json::json!({

@@ -83,17 +83,19 @@ function NewTabPage({ tabId, onLaunch, onRequestClose, onOpenSystemPrompts,
     }
   }, [projects.length, selectedIdx]);
 
+  const selectedProjectPath = projects[selectedIdx]?.path ?? "";
   useEffect(() => {
-    const project = projects[selectedIdx];
-    if (!project) {
+    if (!selectedProjectPath) {
       setAvailableAgents([]);
       setSelectedAgent("");
       return;
     }
-    invoke<AgentDefinition[]>("list_agent_definitions", { projectPath: project.path })
-      .then(setAvailableAgents)
-      .catch(() => setAvailableAgents([]));
-  }, [projects, selectedIdx]);
+    let stale = false;
+    invoke<AgentDefinition[]>("list_agent_definitions", { projectPath: selectedProjectPath })
+      .then(agents => { if (!stale) { setAvailableAgents(agents); setSelectedAgent(""); } })
+      .catch(() => { if (!stale) { setAvailableAgents([]); setSelectedAgent(""); } });
+    return () => { stale = true; };
+  }, [selectedProjectPath]);
 
   const launchProject = useCallback(
     async (project: ProjectInfo) => {

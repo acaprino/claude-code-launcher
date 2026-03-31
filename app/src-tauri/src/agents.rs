@@ -66,7 +66,19 @@ fn scan_agents_dir(dir: &Path, source: &str) -> Vec<AgentDefinition> {
 }
 
 #[tauri::command]
-pub fn list_agent_definitions(project_path: String) -> Vec<AgentDefinition> {
+pub fn list_agent_definitions(project_path: String) -> Result<Vec<AgentDefinition>, String> {
+    // Validate path: reject UNC and traversal
+    if project_path.starts_with("\\\\") || project_path.starts_with("//") {
+        return Err("UNC paths are not supported".to_string());
+    }
+    if project_path.contains("..") {
+        return Err("Path traversal is not allowed".to_string());
+    }
+    let dir = Path::new(&project_path);
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
     let mut agents = Vec::new();
 
     let project_agents_dir = PathBuf::from(&project_path).join(".claude").join("agents");
@@ -81,5 +93,5 @@ pub fn list_agent_definitions(project_path: String) -> Vec<AgentDefinition> {
     agents.retain(|a| seen.insert(a.name.clone()));
 
     agents.sort_by(|a, b| a.name.cmp(&b.name));
-    agents
+    Ok(agents)
 }

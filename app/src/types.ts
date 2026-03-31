@@ -27,8 +27,6 @@ export interface Tab {
   forkSessionId?: string;
   /** When set, session runs as this custom subagent (passed to SDK agent option). */
   agentName?: string;
-  /** Team coordination state — set when Agent Teams is active. */
-  teamState?: TeamState;
   /** Session ID for transcript viewer tabs. */
   transcriptSessionId?: string;
 }

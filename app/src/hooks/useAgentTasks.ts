@@ -3,6 +3,8 @@ import type { AgentTask } from "../types";
 
 export interface AgentTasksHandle {
   tasks: AgentTask[];
+  /** Ref to current tasks array — use in closures to avoid stale reads */
+  tasksRef: React.RefObject<AgentTask[]>;
   /** Start a new task (e.g. from Agent toolUse) */
   startTask: (taskId: string, description: string, taskType: string) => void;
   /** Complete a task (e.g. from Agent toolResult) */
@@ -92,6 +94,7 @@ export function useAgentTasks(): AgentTasksHandle {
 
   return {
     tasks,
+    tasksRef,
     startTask,
     completeTask,
     onTaskStarted,
