@@ -47,6 +47,10 @@ export default memo(function RightSidebar({ messages, agentTasks, onScrollToMess
     return todos.filter((t) => t.status !== "completed").length;
   }, [messages]);
 
+  const workingMemberCount = useMemo(() =>
+    teamState?.members?.filter(m => m.status === "working").length ?? 0
+  , [teamState?.members]);
+
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -85,11 +89,11 @@ export default memo(function RightSidebar({ messages, agentTasks, onScrollToMess
             {tab.id === "todos" && todoCount > 0 && (
               <span key={todoCount} className="sidebar-tab-badge">{todoCount}</span>
             )}
-            {tab.id === "team" && teamState?.members?.filter(m => m.status === "working").length ? (
-              <span key={teamState.members.length} className="sidebar-tab-badge">
-                {teamState.members.filter(m => m.status === "working").length}
+            {tab.id === "team" && workingMemberCount > 0 && (
+              <span key={workingMemberCount} className="sidebar-tab-badge">
+                {workingMemberCount}
               </span>
-            ) : null}
+            )}
           </button>
         ))}
       </div>

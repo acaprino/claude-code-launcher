@@ -53,7 +53,7 @@ export default memo(function TeamPanel({ teamState }: Props) {
         ) : (
           <div className="team-messages">
             {messages.map((msg, i) => (
-              <div key={i} className="team-message">
+              <div key={`${msg.from}-${msg.timestamp}-${i}`} className="team-message">
                 <span className="team-msg-from">{msg.from}</span>
                 <span className="team-msg-arrow">{"\u2192"}</span>
                 <span className="team-msg-to">{msg.to}</span>

@@ -60,6 +60,7 @@ export default memo(function XTermView(props: SessionViewProps) {
 
   // ── Refs ──
   const containerRef = useRef<HTMLDivElement>(null);
+  const nullScrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const rendererRef = useRef<TerminalRenderer | null>(null);
@@ -257,9 +258,17 @@ export default memo(function XTermView(props: SessionViewProps) {
   const toggleSidebar = useCallback(() => setSidebarOpen(prev => !prev), []);
 
   // ── Auto-open sidebar when team becomes active ──
+  // Intentionally omits sidebarOpen from deps: we only want to react to
+  // teamState.active transitioning to true, not re-run when the user toggles the sidebar.
+  const teamAutoOpened = useRef(false);
   useEffect(() => {
-    if (ctrl.teamState?.active && !sidebarOpen) {
-      setSidebarOpen(true);
+    if (ctrl.teamState?.active) {
+      if (!teamAutoOpened.current) {
+        teamAutoOpened.current = true;
+        setSidebarOpen(true);
+      }
+    } else {
+      teamAutoOpened.current = false;
     }
   }, [ctrl.teamState?.active]);
 
@@ -324,7 +333,7 @@ export default memo(function XTermView(props: SessionViewProps) {
             messages={deferredMessages}
             agentTasks={agentTasks}
             onScrollToMessage={() => {/* TODO: Phase 4 - scrollToLine */}}
-            scrollContainerRef={{ current: null }}
+            scrollContainerRef={nullScrollRef}
             teamState={ctrl.teamState}
           />
         )}
