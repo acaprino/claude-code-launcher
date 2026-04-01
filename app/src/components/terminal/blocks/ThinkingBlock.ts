@@ -13,8 +13,10 @@ export class ThinkingBlock implements Block {
 
   constructor(public readonly id: string, public text: string) {}
 
-  append(chunk: string): void {
-    this.text += chunk;
+  append(_chunk: string): void {
+    // No-op: thinking text is displayed by the sidebar via useBufferedText,
+    // not from this block. Skipping accumulation saves memory during
+    // high-frequency thinking events (~8ms intervals).
   }
 
   end(): void {

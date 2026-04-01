@@ -308,6 +308,9 @@ export class TerminalRenderer {
       this.inputManager?.setStreamingActive(false);
       this.deferredUpdates = [];
     }
+    // Always reset thinking state — forceFinalize() ends thinking without
+    // emitting blockUpdated, so the renderer never gets the signal.
+    this.inputManager?.setThinkingActive(false);
 
     this.inputManager?.resetInputTracking();
     this.terminal.clear();
