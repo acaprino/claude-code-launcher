@@ -14,7 +14,7 @@ import type { ToolBlock } from "./blocks/ToolBlock";
 import type { TerminalDocument, DocumentEvent } from "./TerminalDocument";
 import type { TerminalPalette } from "./themes";
 import type { InputManager } from "./InputManager";
-import { CURSOR_SAVE, CURSOR_RESTORE, cursorUp, ERASE_LINE, sanitizeAgentText } from "./AnsiUtils";
+import { CURSOR_SAVE, CURSOR_RESTORE, cursorUp, ERASE_LINE, DIM, RESET, ICON, sanitizeAgentText } from "./AnsiUtils";
 
 export class TerminalRenderer {
   private cols: number;
@@ -240,12 +240,16 @@ export class TerminalRenderer {
     }
   }
 
-  /** Write streaming text directly to terminal (sanitized) */
+  /** Write streaming text directly to terminal (sanitized, with gutter) */
   private writeStreaming(text: string): void {
     this.inputManager?.notifyOutput();
+    const gutter = `  ${DIM}${ICON.gutter}${RESET} `;
     const sanitized = sanitizeAgentText(text);
     const trimmed = sanitized.replace(/[ \t]+$/gm, "");
-    const xtermText = trimmed.replace(/\n/g, "\r\n");
+    // Add gutter prefix to each line of streamed text
+    const lines = trimmed.split("\n");
+    const guttered = lines.map(l => `${gutter}${l}`).join("\n");
+    const xtermText = guttered.replace(/\n/g, "\r\n");
     this.terminal.write(xtermText);
     this.lastStreamedEndedWithNewline = trimmed.endsWith("\n");
   }

@@ -1,6 +1,9 @@
 import type { Block } from "./Block";
 import type { TerminalPalette } from "../themes";
-import { fg, BOLD, RESET, wordWrap, sanitizeAgentText } from "../AnsiUtils";
+import { fg, BOLD, DIM, RESET, ICON, wordWrap, sanitizeAgentText } from "../AnsiUtils";
+
+const GUTTER = `  ${DIM}${ICON.gutter}${RESET} `;
+const GUTTER_WIDTH = 4;
 
 export class ErrorBlock implements Block {
   readonly type = "error";
@@ -18,10 +21,13 @@ export class ErrorBlock implements Block {
   render(cols: number, palette: TerminalPalette): string {
     const prefix = `${fg(palette.red)}${BOLD}ERROR${RESET} ${fg(palette.red)}[${this.code}]${RESET} `;
     const prefixLen = 8 + this.code.length + 3;
-    const lines = wordWrap(sanitizeAgentText(this.message), cols - prefixLen);
+    const innerCols = Math.max(20, cols - GUTTER_WIDTH);
+    const lines = wordWrap(sanitizeAgentText(this.message), innerCols - prefixLen);
 
     const rendered = lines.map((line, i) =>
-      i === 0 ? `${prefix}${fg(palette.red)}${line}${RESET}` : `${" ".repeat(prefixLen)}${fg(palette.red)}${line}${RESET}`
+      i === 0
+        ? `${GUTTER}${prefix}${fg(palette.red)}${line}${RESET}`
+        : `${GUTTER}${" ".repeat(prefixLen)}${fg(palette.red)}${line}${RESET}`
     ).join("\r\n");
 
     return `${rendered}\r\n`;
