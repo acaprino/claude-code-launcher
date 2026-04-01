@@ -223,6 +223,9 @@ export function horizontalRule(text: string, cols: number, color: string): strin
 }
 
 // ── Status icons ───────────────────────────────────────────────────
+const SPINNER_CHARS = ["\u00b7", "\u2722", "\u2733", "\u2736", "\u273b", "\u273d"]; // · ✢ ✳ ✶ ✻ ✽
+export const SPINNER_FRAMES = [...SPINNER_CHARS, ...[...SPINNER_CHARS].reverse().slice(1)];
+
 export const ICON = {
   pending: "\u25cb",   // ○
   success: "\u2713",   // ✓
@@ -232,5 +235,17 @@ export const ICON = {
   warning: "\u26a0",   // ⚠
   arrow_right: "\u25b8", // ▸
   arrow_down: "\u25be",  // ▾
-  spinner: ["\u280b", "\u2819", "\u2838", "\u2830", "\u2824", "\u2826", "\u2807", "\u280f"], // braille spinner
+  gutter: "\u23bf",    // ⎿
+  bullet: "\u25cf",    // ●
 } as const;
+
+/** Interpolate between two hex colors. t=0 → hex1, t=1 → hex2. */
+export function interpolateColor(hex1: string, hex2: string, t: number): string {
+  const [r1, g1, b1] = hexToRgb(hex1);
+  const [r2, g2, b2] = hexToRgb(hex2);
+  const clamp = (v: number) => Math.round(Math.max(0, Math.min(255, v)));
+  const r = clamp(r1 + (r2 - r1) * t);
+  const g = clamp(g1 + (g2 - g1) * t);
+  const b = clamp(b1 + (b2 - b1) * t);
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}

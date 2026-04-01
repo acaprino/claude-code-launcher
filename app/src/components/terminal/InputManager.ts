@@ -6,7 +6,7 @@
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalPalette } from "./themes";
 import type { PermissionSuggestion, AskQuestionItem } from "../../types";
-import { fg, BOLD, DIM, RESET, ICON, ERASE_LINE, ERASE_BELOW, ERASE_TO_END, cursorColumn, cursorUp, cursorDown, cursorBack, CURSOR_SAVE, CURSOR_RESTORE } from "./AnsiUtils";
+import { fg, BOLD, DIM, RESET, ICON, ERASE_LINE, ERASE_BELOW, ERASE_TO_END, cursorColumn, cursorUp, cursorDown, cursorBack, CURSOR_SAVE, CURSOR_RESTORE, SPINNER_FRAMES, interpolateColor } from "./AnsiUtils";
 
 export type InputMode = "normal" | "processing" | "ask" | "permission";
 
@@ -40,17 +40,18 @@ export class InputManager {
   private spinnerInterval: ReturnType<typeof setInterval> | null = null;
   private spinnerFrame = 0;
   private spinnerStartTime = 0;
+  private spinnerVerb = "Thinking...";
+  private static readonly STALL_THRESHOLD = 30_000; // 30s → color shift to red
 
   // Autocomplete state
   private completionInFlight = false;
 
-  // Two-line spinner layout: spinner on line N, cursor on line N+1
+  // Spinner layout: spinner on line N, cursor on line N+1 (for input below)
   private spinnerOnScreen = false;
 
   // Output tracking — pauses spinner when output is happening
   private spinnerPauseTimer: ReturnType<typeof setTimeout> | null = null;
   private streamingActive = false;
-  private thinkingActive = false;
 
   // Input line tracking — true when user's prompt line is rendered on screen during processing
   private inputLineOnScreen = false;
@@ -83,7 +84,7 @@ export class InputManager {
       clearTimeout(this.spinnerPauseTimer);
       this.spinnerPauseTimer = null;
     }
-    this.thinkingActive = false;
+    this.spinnerVerb = "Thinking...";
     this.inputLineOnScreen = false;
     this.inputRows = 1;
     this.inputCursorRow = 0;
@@ -143,55 +144,70 @@ export class InputManager {
     }
   }
 
-  /** Called by TerminalRenderer when thinking block appears/ends */
-  setThinkingActive(active: boolean): void {
-    this.thinkingActive = active;
-    if (active && this.spinnerInterval) {
-      this.stopSpinner();
-    }
+  /** Called by TerminalRenderer to update the spinner verb */
+  setSpinnerVerb(verb: string): void {
+    this.spinnerVerb = verb;
   }
 
   /**
    * Call this whenever the renderer is about to write output.
    * Pauses the spinner so it doesn't conflict with streaming text.
-   * Spinner auto-resumes after 600ms of silence (only if not streaming/thinking).
+   * Spinner auto-resumes after 600ms of silence (only if not streaming).
    */
   notifyOutput(): void {
     if (this.mode !== "processing") return;
-    // Always stop the spinner if it's running — clear the line for incoming output
-    if (this.spinnerInterval) {
-      this.stopSpinner();
-    }
     if (this.spinnerPauseTimer) clearTimeout(this.spinnerPauseTimer);
     this.spinnerPauseTimer = setTimeout(() => {
       this.spinnerPauseTimer = null;
-      // Don't restart spinner if streaming/thinking is active or user is typing
-      if (this.mode === "processing" && !this.streamingActive && !this.thinkingActive && this.buffer.length === 0) {
+      if (this.mode === "processing" && !this.streamingActive) {
         this.startSpinner();
       }
     }, 600);
   }
 
   /**
-   * Temporarily remove the user's input line from the terminal so the renderer
-   * can write output without interleaving. Returns true if an input line was cleared.
+   * Erase all ephemeral content (spinner + input) from terminal so the renderer
+   * can write block output cleanly. Returns true if anything was cleared.
    */
-  suspendInputLine(): boolean {
-    if (!this.inputLineOnScreen || this.buffer.length === 0) return false;
-    this.eraseInput();
+  suspendAll(): boolean {
+    const hadInput = this.inputLineOnScreen && this.buffer.length > 0;
+    const hadSpinner = this.spinnerOnScreen;
+    if (!hadInput && !hadSpinner) return false;
+
+    // Stop spinner interval (don't write erase — we handle it below)
+    if (this.spinnerInterval) {
+      clearInterval(this.spinnerInterval);
+      this.spinnerInterval = null;
+    }
+
+    // Calculate how far up we need to go from current cursor position
+    let rowsUp = 0;
+    if (hadInput) rowsUp += this.inputCursorRow;
+    if (hadSpinner) rowsUp += 1; // spinner is 1 row above input
+
+    if (rowsUp > 0) this.terminal.write(cursorUp(rowsUp));
+    this.terminal.write(`\r${ERASE_BELOW}`);
+
     this.inputLineOnScreen = false;
+    this.inputRows = 1;
+    this.inputCursorRow = 0;
+    this.spinnerOnScreen = false;
     return true;
   }
 
   /**
-   * Re-render the user's input line after the renderer wrote output.
-   * Only call after suspendInputLine() returned true.
+   * Re-render spinner + input after the renderer wrote block output.
    */
-  resumeInputLine(): void {
-    if (this.buffer.length === 0 || this.mode !== "processing") return;
-    this.writeInputLine();
-    this.positionInputCursor();
-    this.inputLineOnScreen = true;
+  resumeAll(): void {
+    if (this.mode !== "processing" || this.streamingActive) return;
+    // Re-render spinner
+    this.renderSpinner();
+    // Re-render input below spinner (if user has typed something)
+    if (this.buffer.length > 0) {
+      this.writeInputLine();
+      this.positionInputCursor();
+      this.inputLineOnScreen = true;
+    }
   }
 
   dispose(): void {
@@ -240,12 +256,11 @@ export class InputManager {
           return;
         }
         if (this.mode === "processing") {
-          // Erase wrapped input, go back to spinner
+          // Erase input, spinner stays visible above
           this.eraseInput();
           this.buffer = "";
           this.cursorPos = 0;
           this.inputLineOnScreen = false;
-          this.startSpinner();
         } else {
           // Normal mode: move to end of wrapped text, then new line + prompt
           const endRow = this.inputRows - 1;
@@ -331,7 +346,6 @@ export class InputManager {
       if (this.mode === "processing" && this.buffer.length === 0) {
         this.eraseInput();
         this.inputLineOnScreen = false;
-        this.startSpinner();
         return;
       }
       // Fast path: single-line — just erase from cursor to end
@@ -357,7 +371,6 @@ export class InputManager {
         this.buffer = "";
         this.cursorPos = 0;
         this.inputLineOnScreen = false;
-        this.startSpinner();
         return;
       }
       this.buffer = "";
@@ -441,11 +454,9 @@ export class InputManager {
       return;
     }
 
-    // If typing while processing, pause spinner and show prompt.
+    // If typing while processing, input appears BELOW the spinner (spinner stays visible).
+    // Cursor is already on the line below the spinner (2-line spinner layout).
     if (this.mode === "processing" && this.buffer.length === 0) {
-      this.stopSpinner();
-      // After stopSpinner, cursor is always on a blank line (the cleared spinner row,
-      // or a line left after stream/block output + \r\n). No extra \r\n needed.
       this.inputRows = 1;
       this.inputCursorRow = 0;
     } else {
@@ -491,10 +502,9 @@ export class InputManager {
     this.cursorPos--;
     if (this.streamingActive && this.mode === "processing") return; // buffer-only during streaming
     if (this.mode === "processing" && this.buffer.length === 0) {
-      // Cleared all text while processing — erase wrapped input, restart spinner
+      // Cleared all text — erase input, spinner stays visible above
       this.eraseInput();
       this.inputLineOnScreen = false;
-      this.startSpinner();
       return;
     }
     // Fast path: single-line ASCII — wide chars need full redraw for correct cursor math
@@ -519,7 +529,6 @@ export class InputManager {
     if (this.mode === "processing" && this.buffer.length === 0) {
       this.eraseInput();
       this.inputLineOnScreen = false;
-      this.startSpinner();
       return;
     }
     // Fast path: single-line ASCII — wide chars need full redraw for correct cursor math
@@ -544,7 +553,6 @@ export class InputManager {
     if (this.mode === "processing" && this.buffer.length === 0) {
       this.eraseInput();
       this.inputLineOnScreen = false;
-      this.startSpinner();
       return;
     }
     this.redrawLine();
@@ -737,19 +745,31 @@ export class InputManager {
     this.renderSpinner();
     this.spinnerInterval = setInterval(() => {
       if (this.spinnerInterval === null) return; // stale callback guard
-      this.spinnerFrame = (this.spinnerFrame + 1) % ICON.spinner.length;
+      this.spinnerFrame = (this.spinnerFrame + 1) % SPINNER_FRAMES.length;
       this.renderSpinner();
-    }, 100);
+    }, 50);
   }
 
   private renderSpinner(): void {
-    const elapsed = Math.floor((Date.now() - this.spinnerStartTime) / 1000);
-    const frame = ICON.spinner[this.spinnerFrame];
-    const spinnerLine = `\r${ERASE_LINE}  ${fg(this.palette.accent)}${frame}${RESET} ${DIM}Working... ${elapsed}s${RESET}`;
+    const elapsedMs = Date.now() - this.spinnerStartTime;
+    const elapsed = Math.floor(elapsedMs / 1000);
+    const frame = SPINNER_FRAMES[this.spinnerFrame];
+
+    // Stall detection: after 30s, interpolate accent → red
+    const stallT = elapsedMs > InputManager.STALL_THRESHOLD
+      ? Math.min(1, (elapsedMs - InputManager.STALL_THRESHOLD) / 30_000)
+      : 0;
+    const color = stallT > 0
+      ? interpolateColor(this.palette.accent, this.palette.red, stallT)
+      : this.palette.accent;
+
+    const timeStr = elapsed > 0 ? ` ${DIM}· ${elapsed}s${RESET}` : "";
+    const spinnerLine = `\r${ERASE_LINE}  ${fg(color)}${frame}${RESET} ${DIM}${this.spinnerVerb}${RESET}${timeStr}`;
 
     if (this.spinnerOnScreen) {
       // Cursor is on the line BELOW the spinner — go up, update, come back
-      this.terminal.write(CURSOR_SAVE + cursorUp(1) + spinnerLine + CURSOR_RESTORE);
+      const inputBelow = this.inputLineOnScreen ? this.inputCursorRow + 1 : 1;
+      this.terminal.write(CURSOR_SAVE + cursorUp(inputBelow) + spinnerLine + CURSOR_RESTORE);
     } else {
       // First frame: write spinner, move cursor to line below
       this.terminal.write(spinnerLine + "\r\n");
@@ -758,21 +778,13 @@ export class InputManager {
   }
 
   private stopSpinner(): void {
-    const wasRunning = this.spinnerInterval !== null;
     if (this.spinnerInterval) {
       clearInterval(this.spinnerInterval);
       this.spinnerInterval = null;
     }
-    if (this.spinnerOnScreen) {
-      // Cursor is on line below spinner. Move up to spinner line, then erase
-      // from there to end of display — clears both spinner and cursor line
-      // without leaving empty rows in the terminal buffer.
-      this.terminal.write(cursorUp(1) + `\r${ERASE_BELOW}`);
-      this.spinnerOnScreen = false;
-    } else if (wasRunning) {
-      // Spinner was on current line but never moved to two-line layout — just clear
-      this.terminal.write(`\r${ERASE_BELOW}`);
-    }
+    // Don't write erase sequences here — suspendAll() handles cleanup.
+    // Just clear the flag; the spinner content stays until suspendAll erases it.
+    this.spinnerOnScreen = false;
   }
 
   // ── Permission mode ─────────────────────────────────────────────

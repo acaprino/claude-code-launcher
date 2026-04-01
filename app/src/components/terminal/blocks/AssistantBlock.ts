@@ -1,6 +1,9 @@
 import type { Block } from "./Block";
 import type { TerminalPalette } from "../themes";
-import { RESET, wordWrap, inlineMarkdown, fg, sanitizeAgentText } from "../AnsiUtils";
+import { RESET, wordWrap, inlineMarkdown, fg, DIM, ICON, sanitizeAgentText } from "../AnsiUtils";
+
+const GUTTER = `  ${DIM}${ICON.gutter}${RESET} `;
+const GUTTER_WIDTH = 4; // "  ⎿ " = 4 visible columns
 
 export class AssistantBlock implements Block {
   readonly type = "assistant";
@@ -25,6 +28,7 @@ export class AssistantBlock implements Block {
   render(cols: number, palette: TerminalPalette): string {
     const sanitized = sanitizeAgentText(this.text).replace(/\s+$/, "");
     const formatted = inlineMarkdown(sanitized, palette);
+    const innerCols = Math.max(20, cols - GUTTER_WIDTH);
     const lines: string[] = [];
     let inCodeBlock = false;
     let codeLang = "";
@@ -34,11 +38,11 @@ export class AssistantBlock implements Block {
         if (!inCodeBlock) {
           inCodeBlock = true;
           codeLang = rawLine.slice(3).trim();
-          lines.push(`${fg(palette.textDim)}${"─".repeat(Math.min(cols - 2, 40))}${codeLang ? ` ${codeLang}` : ""}${RESET}`);
+          lines.push(`${fg(palette.textDim)}${"─".repeat(Math.min(innerCols - 2, 40))}${codeLang ? ` ${codeLang}` : ""}${RESET}`);
         } else {
           inCodeBlock = false;
           codeLang = "";
-          lines.push(`${fg(palette.textDim)}${"─".repeat(Math.min(cols - 2, 40))}${RESET}`);
+          lines.push(`${fg(palette.textDim)}${"─".repeat(Math.min(innerCols - 2, 40))}${RESET}`);
         }
         continue;
       }
@@ -46,11 +50,11 @@ export class AssistantBlock implements Block {
       if (inCodeBlock) {
         lines.push(`${fg(palette.accent)}  ${rawLine}${RESET}`);
       } else {
-        const wrapped = wordWrap(rawLine, cols - 1);
+        const wrapped = wordWrap(rawLine, innerCols);
         lines.push(...wrapped);
       }
     }
 
-    return lines.join("\r\n") + "\r\n";
+    return lines.map(l => `${GUTTER}${l}`).join("\r\n") + "\r\n";
   }
 }

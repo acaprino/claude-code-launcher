@@ -276,9 +276,10 @@ export class TerminalDocument {
   }
 
   handleThinking(text: string): void {
+    // Thinking is displayed via the spinner verb ("Thinking...") and sidebar panel.
+    // No terminal block needed — the spinner handles the visual indicator.
     if (!this.thinkingBlock) {
       this.thinkingBlock = new ThinkingBlock(this.nextId(), "");
-      this.addBlock(this.thinkingBlock);
     }
     this.thinkingBlock.append(text);
     this.emit({ type: "thinkingAppend", block: this.thinkingBlock, text });

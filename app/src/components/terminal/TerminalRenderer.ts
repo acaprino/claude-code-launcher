@@ -10,6 +10,7 @@
 import type { Terminal } from "@xterm/xterm";
 import type { Block } from "./blocks/Block";
 import type { UserBlock } from "./blocks/UserBlock";
+import type { ToolBlock } from "./blocks/ToolBlock";
 import type { TerminalDocument, DocumentEvent } from "./TerminalDocument";
 import type { TerminalPalette } from "./themes";
 import type { InputManager } from "./InputManager";
@@ -26,8 +27,8 @@ export class TerminalRenderer {
   private deferredUpdates: Block[] = [];
   /** Whether the last streamed chunk ended with a newline */
   private lastStreamedEndedWithNewline = false;
-  /** Whether user input was suspended at streaming start — restore at streamEnd */
-  private inputSuspendedForStreaming = false;
+  /** Whether ephemeral content was suspended at streaming start */
+  private suspendedForStreaming = false;
 
   constructor(
     private terminal: Terminal,
@@ -74,9 +75,8 @@ export class TerminalRenderer {
         this.onStreamEnd();
         break;
       case "thinkingAppend":
-        // No terminal update — the thinking line is static ("Thinking...").
-        // Thinking text is shown in the sidebar panel; the terminal line
-        // only updates once when thinking ends (via blockUpdated → "Thought for Xs").
+        // No terminal update — thinking text is shown in the sidebar panel.
+        // The spinner verb ("Thinking...") is already set when thinking starts.
         break;
       case "cleared":
         this.terminal.clear();
@@ -90,34 +90,37 @@ export class TerminalRenderer {
   private onBlockAdded(block: Block): void {
     // Live user input already echoed by InputManager — just track it, no output written
     if (block.type === "user" && !(block as UserBlock).fromHistory) {
-      // Use render() + count \r\n for correct line count (handles wide chars, wrapping)
       const content = block.render(this.cols, this.palette);
       const visualLines = (content.match(/\r\n/g) || []).length || 1;
       this.document.commitBlockLines(block, visualLines);
       return;
     }
 
-    // Suspend user's input line before writing output to prevent interleaving
-    const hadInput = this.inputManager?.suspendInputLine() ?? false;
+    // Suspend spinner + input before writing output
+    this.inputManager?.suspendAll();
     this.inputManager?.notifyOutput();
 
-    // Thinking block: suppress spinner while thinking is active
-    if (block.type === "thinking") {
-      this.inputManager?.setThinkingActive(true);
+    // Update spinner verb based on block type
+    if (block.type === "tool" || block.type === "diff") {
+      const toolName = (block as ToolBlock).tool;
+      const input = (block as ToolBlock).input as Record<string, unknown> | null;
+      const path = input?.file_path || input?.path || input?.command || "";
+      const summary = path ? String(path).split(/[/\\]/).pop() : "";
+      this.inputManager?.setSpinnerVerb(summary ? `${toolName}: ${summary}` : toolName);
     }
 
     // Streaming assistant block: don't render yet, text comes via streamAppend
     if (block.type === "assistant" && (block as { streaming?: boolean }).streaming) {
       this.streamingActive = true;
       this.inputManager?.setStreamingActive(true);
+      this.inputManager?.setSpinnerVerb("Responding...");
       this.document.commitBlockLines(block, 0);
-      // Don't resume input line during streaming — it will be restored at streamEnd
-      if (hadInput) this.inputSuspendedForStreaming = true;
+      this.suspendedForStreaming = true;
       return;
     }
 
     this.renderBlock(block);
-    if (hadInput) this.inputManager?.resumeInputLine();
+    this.inputManager?.resumeAll();
   }
 
   private renderBlock(block: Block): void {
@@ -140,22 +143,22 @@ export class TerminalRenderer {
 
     if (this.streamingActive) {
       this.inputManager?.notifyOutput();
-      // Defer update — cursor position is unreliable during streaming
       if (!this.deferredUpdates.includes(block)) {
         this.deferredUpdates.push(block);
       }
       return;
     }
 
-    // Thinking block end: update "Thinking..." → "Thought for Xs", release spinner lock
-    if (block.type === "thinking" && (block as { ended?: boolean }).ended) {
-      this.inputManager?.setThinkingActive(false);
+    // After tool result, reset verb to "Thinking..."
+    if ((block.type === "tool" || block.type === "diff") &&
+        (block as ToolBlock).status !== "pending") {
+      this.inputManager?.setSpinnerVerb("Thinking...");
     }
 
-    const hadInput = this.inputManager?.suspendInputLine() ?? false;
+    this.inputManager?.suspendAll();
     this.inputManager?.notifyOutput();
     this.updateBlock(block);
-    if (hadInput) this.inputManager?.resumeInputLine();
+    this.inputManager?.resumeAll();
   }
 
   /** In-place update of an existing block (if still in viewport) */
@@ -177,27 +180,22 @@ export class TerminalRenderer {
     const newContent = block.render(this.cols, this.palette);
     const newLineCount = (newContent.match(/\r\n/g) || []).length;
 
-    // If line count changed, fall back to partial redraw from this block onwards
     if (newLineCount !== oldLineCount) {
       this.redrawFrom(block);
       return;
     }
 
-    // Same line count — safe to do in-place cursor update
     this.terminal.write(CURSOR_SAVE);
-
     const linesToMoveUp = linesFromBottom + oldLineCount;
     if (linesToMoveUp > 0) {
       this.terminal.write(cursorUp(linesToMoveUp));
     }
-
     for (let i = 0; i < oldLineCount; i++) {
       this.terminal.write(`${ERASE_LINE}\r\n`);
     }
     if (oldLineCount > 0) {
       this.terminal.write(cursorUp(oldLineCount));
     }
-
     this.terminal.write(newContent);
     this.document.commitBlockLines(block, newLineCount);
     this.terminal.write(CURSOR_RESTORE);
@@ -205,7 +203,6 @@ export class TerminalRenderer {
 
   /** Redraw from a specific block onwards (when line count changes) */
   private redrawFrom(startBlock: Block): void {
-    // Find the block index
     const blocks = this.document.getBlocks();
     let startIdx = -1;
     for (let i = 0; i < blocks.length; i++) {
@@ -213,11 +210,9 @@ export class TerminalRenderer {
     }
     if (startIdx < 0) return;
 
-    // Calculate lines to erase from startBlock to bottom
     const totalLines = this.document.getTotalLines();
     const linesToErase = totalLines - startBlock.startLine;
 
-    // Move cursor to start of the block
     if (linesToErase > 0) {
       this.terminal.write(cursorUp(linesToErase));
     }
@@ -228,11 +223,9 @@ export class TerminalRenderer {
       this.terminal.write(cursorUp(linesToErase));
     }
 
-    // Re-render from startBlock onwards
     let currentLine = startBlock.startLine;
     for (let i = startIdx; i < blocks.length; i++) {
       const b = blocks[i];
-      // Add visual spacing before user prompts
       if (b.type === "user" && i > 0) {
         this.terminal.write("\r\n");
         currentLine++;
@@ -249,13 +242,8 @@ export class TerminalRenderer {
 
   /** Write streaming text directly to terminal (sanitized) */
   private writeStreaming(text: string): void {
-    // Suspend user's input line if it appeared since streaming started
-    if (this.inputManager?.suspendInputLine()) {
-      this.inputSuspendedForStreaming = true;
-    }
     this.inputManager?.notifyOutput();
     const sanitized = sanitizeAgentText(text);
-    // Trim trailing whitespace per line (but preserve newlines)
     const trimmed = sanitized.replace(/[ \t]+$/gm, "");
     const xtermText = trimmed.replace(/\n/g, "\r\n");
     this.terminal.write(xtermText);
@@ -266,8 +254,8 @@ export class TerminalRenderer {
   private onStreamEnd(): void {
     this.streamingActive = false;
     this.inputManager?.setStreamingActive(false);
+    this.inputManager?.setSpinnerVerb("Thinking...");
 
-    // Only add newline if the streamed text didn't already end with one
     if (!this.lastStreamedEndedWithNewline) {
       this.terminal.write("\r\n");
     }
@@ -290,27 +278,23 @@ export class TerminalRenderer {
       this.updateBlock(block);
     }
 
-    // Restore user's input line if it was suspended during streaming
-    if (this.inputSuspendedForStreaming) {
-      this.inputSuspendedForStreaming = false;
-      this.inputManager?.resumeInputLine();
+    // Resume spinner + input
+    if (this.suspendedForStreaming) {
+      this.suspendedForStreaming = false;
+      this.inputManager?.resumeAll();
     }
   }
 
   // ── Full redraw ─────────────────────────────────────────────────
 
   fullRedraw(): void {
-    // If streaming, finalize the streaming block first so render() has full text
     if (this.streamingActive) {
       this.document.forceFinalize();
       this.streamingActive = false;
-      this.inputSuspendedForStreaming = false;
+      this.suspendedForStreaming = false;
       this.inputManager?.setStreamingActive(false);
       this.deferredUpdates = [];
     }
-    // Always reset thinking state — forceFinalize() ends thinking without
-    // emitting blockUpdated, so the renderer never gets the signal.
-    this.inputManager?.setThinkingActive(false);
 
     this.inputManager?.resetInputTracking();
     this.terminal.clear();
@@ -320,7 +304,6 @@ export class TerminalRenderer {
     const blocks = this.document.getBlocks();
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
-      // Add visual spacing before user prompts
       if (block.type === "user" && i > 0) {
         this.terminal.write("\r\n");
         currentLine++;
