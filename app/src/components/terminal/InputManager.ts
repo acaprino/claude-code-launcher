@@ -6,7 +6,7 @@
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalPalette } from "./themes";
 import type { PermissionSuggestion, AskQuestionItem } from "../../types";
-import { fg, BOLD, DIM, RESET, ICON, ERASE_LINE, ERASE_BELOW, ERASE_TO_END, cursorColumn, cursorUp, cursorDown, cursorBack, CURSOR_SAVE, CURSOR_RESTORE, SPINNER_FRAMES, interpolateColor, randomSpinnerVerb } from "./AnsiUtils";
+import { fg, BOLD, DIM, RESET, ICON, ERASE_LINE, ERASE_TO_END, cursorColumn, cursorUp, cursorDown, cursorBack, CURSOR_SAVE, CURSOR_RESTORE, SPINNER_FRAMES, interpolateColor, randomSpinnerVerb } from "./AnsiUtils";
 
 export type InputMode = "normal" | "processing" | "ask" | "permission";
 
@@ -195,13 +195,27 @@ export class InputManager {
       this.spinnerPauseTimer = null;
     }
 
-    // Calculate how far up we need to go from current cursor position
+    // Erase only the rows we own: input rows + spinner row.
+    // Use per-line ERASE_LINE instead of ERASE_BELOW to avoid
+    // accidentally wiping block content above.
+    const totalEphemeralRows = (hadInput ? this.inputRows : 0) + (hadSpinner ? 1 : 0);
+
+    // Move to the topmost ephemeral row
     let rowsUp = 0;
     if (hadInput) rowsUp += this.inputCursorRow;
-    if (hadSpinner) rowsUp += 1; // spinner is 1 row above input
-
+    if (hadSpinner) rowsUp += 1;
     if (rowsUp > 0) this.terminal.write(cursorUp(rowsUp));
-    this.terminal.write(`\r${ERASE_BELOW}`);
+
+    // Clear each ephemeral row individually
+    for (let i = 0; i < totalEphemeralRows; i++) {
+      this.terminal.write(`\r${ERASE_LINE}`);
+      if (i < totalEphemeralRows - 1) this.terminal.write(cursorDown(1));
+    }
+    // Return cursor to the topmost ephemeral row (where new content should start)
+    if (totalEphemeralRows > 1) {
+      this.terminal.write(cursorUp(totalEphemeralRows - 1));
+    }
+    this.terminal.write("\r");
 
     this.inputLineOnScreen = false;
     this.inputRows = 1;
@@ -714,7 +728,15 @@ export class InputManager {
     if (this.inputCursorRow > 0) {
       this.terminal.write(cursorUp(this.inputCursorRow));
     }
-    this.terminal.write(`\r${ERASE_BELOW}`);
+    // Clear only the input rows, not everything below (prevents wiping block content)
+    for (let i = 0; i < this.inputRows; i++) {
+      this.terminal.write(`\r${ERASE_LINE}`);
+      if (i < this.inputRows - 1) this.terminal.write(cursorDown(1));
+    }
+    if (this.inputRows > 1) {
+      this.terminal.write(cursorUp(this.inputRows - 1));
+    }
+    this.terminal.write("\r");
     this.inputRows = 1;
     this.inputCursorRow = 0;
   }
